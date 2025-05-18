@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Leo - Agente Médico en Vivo</title>
+  <style>
+    body {
+      background-color: #0c0e2c;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      padding: 40px;
+      text-align: center;
+    }
+
+    h1 {
+      color: #00bfff;
+    }
+
+    #form-section input {
+      padding: 10px;
+      margin: 5px;
+      border-radius: 5px;
+      border: none;
+      width: 250px;
+    }
+
+    #chat-container {
+      margin-top: 30px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .message {
+      background: #222;
+      padding: 10px 15px;
+      border-radius: 8px;
+      margin: 5px;
+      max-width: 600px;
+      text-align: left;
+    }
+
+    .user { align-self: flex-end; background: #00bfff; color: black; }
+    .leo  { align-self: flex-start; background: #333; }
+
+    #ai-agent {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧠 Leo - Agente Virtual Médico</h1>
+  <p>Interactúa con Leo usando tu voz. Él responderá con inteligencia y expresión en tiempo real.</p>
+
+  <div id="form-section">
+    <input type="text" id="name" placeholder="Tu nombre" required>
+    <input type="email" id="email" placeholder="Correo electrónico" required>
+  </div>
+
+  <div id="chat-container"></div>
+
+  <div id="ai-agent"></div>
+
+  <script type="module">
+    import DIDAgent from 'https://agent.d-id.com/v1/index.js';
+
+    const agent = new DIDAgent.Agent({
+      name: 'Leo',
+      mode: 'fabio',
+      agentId: 'agt_8nBIc-s-',
+      clientKey: 'Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN',
+      stream: true,
+      voice: { lang: 'es-ES' }
+    });
+
+    agent.mount(document.getElementById("ai-agent"));
+
+    agent.on('response', async (text) => {
+      const container = document.getElementById("chat-container");
+      const leoMsg = document.createElement("div");
+      leoMsg.className = "message leo";
+      leoMsg.textContent = text;
+      container.appendChild(leoMsg);
+
+      // Guardar en backend
+      await fetch('/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('name').value,
+          email: document.getElementById('email').value,
+          message: agent.lastInput,
+          response: text
+        })
+      });
+    });
+
+    agent.on('input', (text) => {
+      const container = document.getElementById("chat-container");
+      const userMsg = document.createElement("div");
+      userMsg.className = "message user";
+      userMsg.textContent = text;
+      container.appendChild(userMsg);
+    });
+
+    agent.start();
+  </script>
+
+</body>
+</html>
