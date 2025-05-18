@@ -1,4 +1,3 @@
-# app.py (solo para registrar conversación de agente Leo en tiempo real)
 import os
 import sqlite3
 from datetime import datetime
@@ -7,15 +6,20 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import openai
 
+# Cargar variables de entorno
 load_dotenv()
 
+# Configurar Flask
 app = Flask(__name__)
 CORS(app)
+
+# Configurar OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Ruta a base de datos
 DB_PATH = "logs/interactions.db"
 
-
+# Inicializar base de datos
 def init_db():
     os.makedirs("logs", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -31,10 +35,12 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Ruta principal
 @app.route("/")
 def index():
     return render_template("chat.html")
 
+# Ruta para guardar interacciones
 @app.route("/log", methods=["POST"])
 def log_interaction():
     data = request.json
@@ -53,12 +59,8 @@ def log_interaction():
     conn.close()
     return jsonify({"status": "ok"})
 
-
-if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-    @app.route("/admin")
+# Panel de administración para visualizar conversaciones
+@app.route("/admin")
 def admin_panel():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -67,4 +69,7 @@ def admin_panel():
     conn.close()
     return render_template("admin.html", data=data)
 
-
+# Iniciar servidor
+if __name__ == "__main__":
+    init_db()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

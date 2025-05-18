@@ -52,17 +52,6 @@
     }
   </style>
 </head>
-<!-- Leo Agent Streaming Script -->
-<script
-  type="module"
-  src="https://agent.d-id.com/v1/index.js"
-  data-name="did-agent"
-  data-mode="fabio"
-  data-client-key="Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN"
-  data-agent-id="agt_8nBIc-s-"
-  data-monitor="true">
-</script>
-
 <body>
 
   <h1>🧠 Leo - Agente Virtual Médico</h1>
@@ -76,6 +65,17 @@
   <div id="chat-container"></div>
 
   <div id="ai-agent"></div>
+
+  <!-- Leo Agent Streaming Script (debe ir dentro del body) -->
+  <script
+    type="module"
+    src="https://agent.d-id.com/v1/index.js"
+    data-name="did-agent"
+    data-mode="fabio"
+    data-client-key="Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN"
+    data-agent-id="agt_8nBIc-s-"
+    data-monitor="true">
+  </script>
 
   <script type="module">
     import DIDAgent from 'https://agent.d-id.com/v1/index.js';
