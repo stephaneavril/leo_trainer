@@ -3,131 +3,46 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Leo | Entrenamiento Médico</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <title>Entrenamiento Leo - Ingreso</title>
   <style>
     body {
       background-color: #0c0e2c;
-      color: #e0e0e0;
-      font-family: 'Inter', sans-serif;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 40px 20px;
+      justify-content: center;
+      height: 100vh;
     }
 
-    h1 {
-      font-size: 2rem;
-      color: #00bfff;
-      margin-bottom: 10px;
-    }
-
-    p.sub {
-      font-size: 1rem;
-      color: #bbbbbb;
-      margin-bottom: 40px;
-    }
-
-    .form-group {
-      margin: 10px 0;
-      width: 100%;
-      max-width: 400px;
-    }
-
-    input, select {
-      width: 100%;
-      padding: 12px;
-      border-radius: 8px;
+    input {
+      padding: 10px;
+      margin: 10px;
+      width: 250px;
       border: none;
-      font-size: 16px;
-      margin-bottom: 15px;
+      border-radius: 5px;
     }
 
     button {
+      padding: 10px 30px;
       background-color: #00bfff;
-      color: white;
-      padding: 12px 24px;
+      color: black;
       border: none;
-      border-radius: 8px;
-      font-size: 16px;
+      border-radius: 5px;
       font-weight: bold;
       cursor: pointer;
-      transition: background 0.3s;
-    }
-
-    button:hover {
-      background-color: #0099cc;
-    }
-
-    #status {
-      margin-top: 20px;
-      font-size: 1rem;
-      color: #90caf9;
-    }
-
-    video {
-      margin-top: 20px;
-      width: 100%;
-      max-width: 600px;
-      border-radius: 12px;
-      display: none;
-      box-shadow: 0 0 30px rgba(0,191,255,0.2);
-    }
-
-    .logo {
-      width: 120px;
-      margin-bottom: 20px;
     }
   </style>
 </head>
 <body>
 
-  <img src="/static/logo.png" alt="TEAMS Logo" class="logo">
-  <h1>Leo, Asistente Virtual</h1>
-  <p class="sub">Simula conversaciones médicas y entrena tus habilidades</p>
+  <h1>🧠 Entrenamiento Virtual con Leo</h1>
+  <form action="/select" method="POST">
+    <input type="text" name="name" placeholder="Tu nombre" required><br>
+    <input type="email" name="email" placeholder="Correo electrónico" required><br>
+    <button type="submit">Comenzar</button>
+  </form>
 
-  <div class="form-group">
-    <input id="name" placeholder="Tu nombre" />
-    <input id="email" type="email" placeholder="Correo electrónico" />
-    <select id="scenario">
-      <option value="doctor">Doctor</option>
-      <option value="coach">Gerente Coach</option>
-      <option value="farmacéutico">Farmacéutico</option>
-    </select>
-    <input id="message" placeholder="Escribe tu mensaje aquí" />
-    <button onclick="sendMessage()">Enviar a Leo</button>
-  </div>
-
-  <div id="status"></div>
-  <video id="leoVideo" controls></video>
-
-  <script>
-    async function sendMessage() {
-      document.getElementById("status").innerText = "🧠 Leo está pensando...";
-      const res = await fetch("/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: document.getElementById("name").value,
-          email: document.getElementById("email").value,
-          scenario: document.getElementById("scenario").value,
-          message: document.getElementById("message").value
-        })
-      });
-
-      const data = await res.json();
-      const status = document.getElementById("status");
-      const video = document.getElementById("leoVideo");
-
-      if (data.video_url) {
-        status.innerText = "🎬 Respuesta generada por Leo:";
-        video.src = data.video_url;
-        video.style.display = "block";
-        video.play();
-      } else {
-        status.innerText = "❌ Error: no se pudo generar el video.";
-      }
-    }
-  </script>
 </body>
 </html>

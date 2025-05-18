@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Selecciona el escenario</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background-color: #0c0e2c;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      padding: 20px;
+    }
+
+    h1 {
+      color: #00bfff;
+      margin-bottom: 30px;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      width: 280px;
+    }
+
+    button {
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      background: #00bfff;
+      color: black;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    input[type="hidden"] {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Selecciona tu entrenamiento</h1>
+
+  <form action="/chat" method="POST">
+    <input type="hidden" name="name" value="{{ name }}">
+    <input type="hidden" name="email" value="{{ email }}">
+
+    <button type="submit" name="scenario" value="Entrevista con médico">🩺 Entrevista con médico</button>
+    <button type="submit" name="scenario" value="Coaching para representante">📋 Coaching para representante</button>
+    <button type="submit" name="scenario" value="Capacitación para farmacéutico">💊 Capacitación para farmacéutico</button>
+  </form>
+
+</body>
+</html>

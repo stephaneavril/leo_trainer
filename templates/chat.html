@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Leo - Agente Médico en Vivo</title>
+  <title>Leo - Sesión en Vivo</title>
   <style>
     body {
       background-color: #0c0e2c;
@@ -15,14 +15,6 @@
 
     h1 {
       color: #00bfff;
-    }
-
-    #form-section input {
-      padding: 10px;
-      margin: 5px;
-      border-radius: 5px;
-      border: none;
-      width: 250px;
     }
 
     #chat-container {
@@ -54,19 +46,14 @@
 </head>
 <body>
 
-  <h1>🧠 Leo - Agente Virtual Médico</h1>
-  <p>Interactúa con Leo usando tu voz. Él responderá con inteligencia y expresión en tiempo real.</p>
-
-  <div id="form-section">
-    <input type="text" id="name" placeholder="Tu nombre" required>
-    <input type="email" id="email" placeholder="Correo electrónico" required>
-  </div>
+  <h1>🧠 Leo - Entrenamiento: {{ scenario }}</h1>
+  <p>Interacción en tiempo real. Se está grabando tu participación.</p>
 
   <div id="chat-container"></div>
 
   <div id="ai-agent"></div>
 
-  <!-- Leo Agent Streaming Script (debe ir dentro del body) -->
+  <!-- D-ID Agent Script -->
   <script
     type="module"
     src="https://agent.d-id.com/v1/index.js"
@@ -80,6 +67,10 @@
   <script type="module">
     import DIDAgent from 'https://agent.d-id.com/v1/index.js';
 
+    const name = "{{ name }}";
+    const email = "{{ email }}";
+    const scenario = "{{ scenario }}";
+
     const agent = new DIDAgent.Agent({
       name: 'Leo',
       mode: 'fabio',
@@ -91,34 +82,57 @@
 
     agent.mount(document.getElementById("ai-agent"));
 
-    agent.on('response', async (text) => {
-      const container = document.getElementById("chat-container");
-      const leoMsg = document.createElement("div");
-      leoMsg.className = "message leo";
-      leoMsg.textContent = text;
-      container.appendChild(leoMsg);
-
-      // Guardar en backend
-      await fetch('/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: document.getElementById('name').value,
-          email: document.getElementById('email').value,
-          message: agent.lastInput,
-          response: text
-        })
-      });
-    });
+    const container = document.getElementById("chat-container");
 
     agent.on('input', (text) => {
-      const container = document.getElementById("chat-container");
       const userMsg = document.createElement("div");
       userMsg.className = "message user";
       userMsg.textContent = text;
       container.appendChild(userMsg);
     });
 
+    agent.on('response', async (text) => {
+      const leoMsg = document.createElement("div");
+      leoMsg.className = "message leo";
+      leoMsg.textContent = text;
+      container.appendChild(leoMsg);
+
+      await fetch('/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          email: email,
+          message: agent.lastInput,
+          response: text,
+          scenario: scenario
+        })
+      });
+    });
+
+    // 🎙 Grabación de voz
+    const recorderInit = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('audio', blob);
+        formData.append('name', name);
+        formData.append('email', email);
+        await fetch('/upload_audio', { method: 'POST', body: formData });
+      };
+
+      recorder.start();
+
+      // detener automáticamente después de 3 minutos
+      setTimeout(() => recorder.stop(), 180000);
+    };
+
+    recorderInit();
     agent.start();
   </script>
 
