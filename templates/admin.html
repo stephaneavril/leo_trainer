@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel de Leo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0c0e2c;
+      color: white;
+      padding: 20px;
+    }
+    h1 { color: #00bfff; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #1a1c3a;
+    }
+    th, td {
+      padding: 10px;
+      border: 1px solid #333;
+    }
+    th {
+      background: #00bfff;
+      color: black;
+    }
+    tr:nth-child(even) { background-color: #202346; }
+  </style>
+</head>
+<body>
+  <h1>📊 Panel de Conversaciones - Leo</h1>
+  <table>
+    <tr>
+      <th>Nombre</th>
+      <th>Correo</th>
+      <th>Mensaje</th>
+      <th>Respuesta IA</th>
+      <th>Fecha</th>
+    </tr>
+    {% for row in data %}
+    <tr>
+      <td>{{ row[0] }}</td>
+      <td>{{ row[1] }}</td>
+      <td>{{ row[2] }}</td>
+      <td>{{ row[3] }}</td>
+      <td>{{ row[4] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
