@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Leo - Sesión en Vivo</title>
+  <title>Sesión con Leo</title>
   <style>
     body {
       background-color: #0c0e2c;
       color: white;
       font-family: 'Segoe UI', sans-serif;
-      padding: 40px;
+      padding: 30px;
       text-align: center;
     }
 
@@ -42,18 +42,29 @@
       right: 20px;
       z-index: 1000;
     }
+
+    #end-btn {
+      margin-top: 40px;
+      padding: 12px 30px;
+      font-size: 16px;
+      background: red;
+      border: none;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
 
-  <h1>🧠 Leo - Entrenamiento: {{ scenario }}</h1>
-  <p>Interacción en tiempo real. Se está grabando tu participación.</p>
+  <h1>🧠 Leo - {{ scenario }}</h1>
+  <p>Tu sesión está siendo grabada en audio y video para evaluación posterior.</p>
 
   <div id="chat-container"></div>
+  <button id="end-btn">Finalizar sesión</button>
 
   <div id="ai-agent"></div>
 
-  <!-- D-ID Agent Script -->
   <script
     type="module"
     src="https://agent.d-id.com/v1/index.js"
@@ -71,6 +82,9 @@
     const email = "{{ email }}";
     const scenario = "{{ scenario }}";
 
+    let lastInput = "";
+    const container = document.getElementById("chat-container");
+
     const agent = new DIDAgent.Agent({
       name: 'Leo',
       mode: 'fabio',
@@ -82,9 +96,8 @@
 
     agent.mount(document.getElementById("ai-agent"));
 
-    const container = document.getElementById("chat-container");
-
     agent.on('input', (text) => {
+      lastInput = text;
       const userMsg = document.createElement("div");
       userMsg.className = "message user";
       userMsg.textContent = text;
@@ -103,37 +116,46 @@
         body: JSON.stringify({
           name: name,
           email: email,
-          message: agent.lastInput,
+          message: lastInput,
           response: text,
           scenario: scenario
         })
       });
     });
 
-    // 🎙 Grabación de voz
-    const recorderInit = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
+    agent.start();
 
-      recorder.ondataavailable = e => chunks.push(e.data);
+    // Grabación de audio y video
+    let recorder;
+    let chunks = [];
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = e => chunks.push(e.data);
+
+    recorder.start();
+    console.log("🎥 Grabación iniciada");
+
+    // Al hacer clic en Finalizar
+    document.getElementById("end-btn").addEventListener("click", async () => {
+      recorder.stop();
+      console.log("📤 Deteniendo grabación...");
+
       recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const blob = new Blob(chunks, { type: 'video/webm' });
         const formData = new FormData();
-        formData.append('audio', blob);
+        formData.append('video', blob);
         formData.append('name', name);
         formData.append('email', email);
-        await fetch('/upload_audio', { method: 'POST', body: formData });
+        await fetch('/upload_video', {
+          method: 'POST',
+          body: formData
+        });
+
+        alert("✅ Sesión finalizada y registrada correctamente.");
+        window.location.href = "/";
       };
-
-      recorder.start();
-
-      // detener automáticamente después de 3 minutos
-      setTimeout(() => recorder.stop(), 180000);
-    };
-
-    recorderInit();
-    agent.start();
+    });
   </script>
 
 </body>

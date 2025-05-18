@@ -1,4 +1,4 @@
-# app.py (con grabación de audio y flujo completo)
+# app.py
 import os
 import sqlite3
 from datetime import datetime
@@ -11,13 +11,18 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-app.config['UPLOAD_FOLDER'] = 'static/audios'
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 DB_PATH = "logs/interactions.db"
+UPLOAD_FOLDER = "static/audios"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# ----------------------
+# DB Init
+# ----------------------
 def init_db():
-    os.makedirs("logs", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS interactions (
@@ -33,26 +38,23 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ----------------------
+# Routes
+# ----------------------
 @app.route("/")
-def login():
+def index():
     return render_template("index.html")
 
 @app.route("/select", methods=["POST"])
 def select():
-    name = request.form.get("name")
-    email = request.form.get("email")
-    return render_template("selector.html", name=name, email=email)
-
-@app.route("/chat", methods=["POST"])
-def chat():
-    name = request.form.get("name")
-    email = request.form.get("email")
-    scenario = request.form.get("scenario")
+    name = request.form["name"]
+    email = request.form["email"]
+    scenario = request.form["scenario"]
     return render_template("chat.html", name=name, email=email, scenario=scenario)
 
 @app.route("/log", methods=["POST"])
 def log_interaction():
-    data = request.json
+    data = request.get_json()
     name = data.get("name")
     email = data.get("email")
     message = data.get("message")
@@ -62,38 +64,40 @@ def log_interaction():
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, audio_path, timestamp)
-                 VALUES (?, ?, ?, ?, ?, '', ?)""",
+    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?)""",
               (name, email, scenario, message, response, timestamp))
     conn.commit()
     conn.close()
     return jsonify({"status": "ok"})
 
-@app.route("/upload_audio", methods=["POST"])
-def upload_audio():
+@app.route("/upload_video", methods=["POST"])
+def upload_video():
     name = request.form.get("name")
     email = request.form.get("email")
-    file = request.files['audio']
-    filename = secure_filename(f"{name}_{datetime.now().isoformat()}.webm")
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(filepath)
+    video = request.files.get("video")
 
-    # Actualiza el registro más reciente del usuario con el audio
+    if not video:
+        return "No video uploaded", 400
+
+    filename = secure_filename(f"{name}_{datetime.now().isoformat().replace(':', '-')}.webm")
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    video.save(save_path)
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""UPDATE interactions SET audio_path=? 
-                 WHERE name=? AND email=? 
-                 ORDER BY id DESC LIMIT 1""",
-              (filepath, name, email))
+    c.execute("UPDATE interactions SET audio_path=? WHERE name=? AND email=? ORDER BY id DESC LIMIT 1",
+              (save_path, name, email))
     conn.commit()
     conn.close()
-    return jsonify({"status": "audio saved"})
+
+    return jsonify({"status": "video saved"})
 
 @app.route("/admin")
 def admin_panel():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT name, email, scenario, message, response, audio_path, timestamp FROM interactions ORDER BY timestamp DESC")
+    c.execute("SELECT name, email, scenario, message, response, audio_path, timestamp FROM interactions ORDER BY id DESC")
     data = c.fetchall()
     conn.close()
     return render_template("admin.html", data=data)
