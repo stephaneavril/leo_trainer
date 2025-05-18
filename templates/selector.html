@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Selecciona el escenario</title>
+  <title>Selecciona tu escenario</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
@@ -30,7 +30,8 @@
     }
 
     button {
-      padding: 10px;
+      padding: 12px;
+      font-size: 16px;
       border: none;
       border-radius: 5px;
       background: #00bfff;
@@ -48,6 +49,7 @@
 
   <h1>Selecciona tu entrenamiento</h1>
 
+  <!-- Formulario general con botones distintos para cada escenario -->
   <form action="/chat" method="POST">
     <input type="hidden" name="name" value="{{ name }}">
     <input type="hidden" name="email" value="{{ email }}">
