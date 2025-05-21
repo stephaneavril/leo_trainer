@@ -65,16 +65,6 @@
 
   <div id="ai-agent"></div>
 
-  <script
-    type="module"
-    src="https://agent.d-id.com/v1/index.js"
-    data-name="did-agent"
-    data-mode="fabio"
-    data-client-key="Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN"
-    data-agent-id="agt_8nBIc-s-"
-    data-monitor="true">
-  </script>
-
   <script type="module">
     import DIDAgent from 'https://agent.d-id.com/v1/index.js';
 
@@ -129,17 +119,24 @@
     let recorder;
     let chunks = [];
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = e => chunks.push(e.data);
+    navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(stream => {
+      console.log("✅ Acceso a cámara y micrófono OK");
 
-    recorder.start();
-    console.log("🎥 Grabación iniciada");
+      // vista previa del usuario
+      const preview = document.createElement('video');
+      preview.srcObject = stream;
+      preview.autoplay = true;
+      preview.muted = true;
+      preview.style.width = '200px';
+      preview.style.position = 'fixed';
+      preview.style.bottom = '20px';
+      preview.style.left = '20px';
+      document.body.appendChild(preview);
 
-    // Al hacer clic en Finalizar
-    document.getElementById("end-btn").addEventListener("click", async () => {
-      recorder.stop();
-      console.log("📤 Deteniendo grabación...");
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = e => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
 
       recorder.onstop = async () => {
         const blob = new Blob(chunks, { type: 'video/webm' });
@@ -147,6 +144,7 @@
         formData.append('video', blob);
         formData.append('name', name);
         formData.append('email', email);
+
         await fetch('/upload_video', {
           method: 'POST',
           body: formData
@@ -155,8 +153,22 @@
         alert("✅ Sesión finalizada y registrada correctamente.");
         window.location.href = "/";
       };
+
+      recorder.start();
+      console.log("🎥 Grabación iniciada");
+    }).catch(err => {
+      console.error("❌ Error accediendo a la cámara/micrófono:", err);
+      alert("No se pudo acceder a la cámara/micrófono. Revisa los permisos del navegador.");
+    });
+
+    document.getElementById("end-btn").addEventListener("click", () => {
+      if (recorder && recorder.state === "recording") {
+        recorder.stop();
+        console.log("📤 Deteniendo grabación...");
+      } else {
+        alert("No se está grabando actualmente.");
+      }
     });
   </script>
-
 </body>
 </html>

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Panel de Resultados Leo</title>
+  <title>Panel RH - Evaluaciones de Leo</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <style>
     body {
@@ -22,10 +22,11 @@
       width: 100%;
       border-collapse: collapse;
       margin-top: 20px;
+      background: #1a1a2e;
     }
 
     th, td {
-      border: 1px solid #444;
+      border: 1px solid #333;
       padding: 10px;
       text-align: left;
     }
@@ -36,17 +37,27 @@
     }
 
     tr:nth-child(even) {
-      background-color: #1a1a2e;
+      background-color: #13132e;
     }
 
-    audio {
+    textarea {
+      width: 100%;
+      padding: 6px;
+      background: #0c0e2c;
+      color: white;
+      border: 1px solid #444;
+      border-radius: 5px;
+      resize: vertical;
+    }
+
+    audio, video {
       width: 200px;
     }
   </style>
 </head>
 <body>
 
-  <h1>📊 Conversaciones registradas - RH</h1>
+  <h1>📊 Panel de Evaluación - RH</h1>
 
   <table>
     <thead>
@@ -55,9 +66,10 @@
         <th>Correo</th>
         <th>Escenario</th>
         <th>Pregunta</th>
-        <th>Respuesta IA</th>
-        <th>Audio</th>
+        <th>Respuesta Leo</th>
+        <th>Video</th>
         <th>Fecha</th>
+        <th>Evaluación RH</th>
       </tr>
     </thead>
     <tbody>
@@ -70,15 +82,16 @@
         <td>{{ row[4] }}</td>
         <td>
           {% if row[5] %}
-            <audio controls>
-              <source src="/{{ row[5] }}" type="audio/webm">
-              Tu navegador no soporta audio.
-            </audio>
+            <video controls>
+              <source src="/{{ row[5] }}" type="video/webm">
+              Tu navegador no soporta video.
+            </video>
           {% else %}
             —
           {% endif %}
         </td>
         <td>{{ row[6][:16] }}</td>
+        <td><textarea placeholder="Observaciones..."></textarea></td>
       </tr>
       {% endfor %}
     </tbody>
