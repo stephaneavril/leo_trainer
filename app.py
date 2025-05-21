@@ -49,6 +49,12 @@ def index():
 def select():
     name = request.form["name"]
     email = request.form["email"]
+    return render_template("selector.html", name=name, email=email)
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    name = request.form["name"]
+    email = request.form["email"]
     scenario = request.form["scenario"]
     return render_template("chat.html", name=name, email=email, scenario=scenario)
 
