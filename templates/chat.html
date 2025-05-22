@@ -89,10 +89,12 @@
       const status = document.getElementById("status");
       const endBtn = document.getElementById("end-btn");
       const confirmation = document.getElementById("confirmation");
+      const chatContainer = document.getElementById("chat-container");
 
       let recorder;
       let chunks = [];
       let stream;
+      const conversationLog = [];
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
@@ -129,16 +131,22 @@
         formData.append('name', name);
         formData.append('email', email);
 
-        const uploadResp = await fetch('/upload_video', {
+        await fetch('/upload_video', {
           method: 'POST',
           body: formData
         });
 
-        if (!uploadResp.ok) {
-          console.error("❌ Error subiendo video");
-          alert("Error subiendo la grabación. Intenta nuevamente.");
-          return;
-        }
+        // Enviar conversación completa a backend
+        await fetch('/log_full_session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            email: email,
+            scenario: scenario,
+            conversation: conversationLog
+          })
+        });
 
         confirmation.style.display = 'block';
         setTimeout(() => {
@@ -149,6 +157,20 @@
       recorder.start();
       console.log("🎥 Grabación iniciada");
       endBtn.style.display = "inline-block";
+
+      const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+          for (const addedNode of mutation.addedNodes) {
+            if (addedNode.classList?.contains("message")) {
+              const isUser = addedNode.classList.contains("user");
+              const text = addedNode.textContent;
+              conversationLog.push({ role: isUser ? "user" : "leo", text });
+            }
+          }
+        }
+      });
+
+      observer.observe(chatContainer, { childList: true });
 
       endBtn.addEventListener("click", () => {
         if (recorder && recorder.state === "recording") {
@@ -168,4 +190,3 @@
   </script>
 </body>
 </html>
-  

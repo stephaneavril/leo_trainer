@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Panel RH - Evaluaciones de Leo</title>
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Panel de RH - Sesiones con Leo</title>
   <style>
     body {
       background-color: #0c0e2c;
@@ -15,87 +15,79 @@
     h1 {
       color: #00bfff;
       text-align: center;
+    }
+
+    .session {
+      background-color: #1c1e3c;
+      border-radius: 12px;
+      padding: 20px;
       margin-bottom: 30px;
+      box-shadow: 0 0 10px #0006;
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: #1a1a2e;
+    .meta {
+      font-size: 14px;
+      color: #ccc;
+      margin-bottom: 10px;
     }
 
-    th, td {
-      border: 1px solid #333;
+    .chat-log {
+      margin-top: 10px;
+      background: #111;
       padding: 10px;
-      text-align: left;
+      border-radius: 8px;
     }
 
-    th {
-      background-color: #222;
-      color: #00bfff;
+    .message {
+      margin: 5px 0;
+      padding: 8px;
+      border-radius: 6px;
     }
 
-    tr:nth-child(even) {
-      background-color: #13132e;
+    .user { background: #00bfff33; color: #00eaff; }
+    .leo  { background: #333; color: #fff; }
+
+    video {
+      width: 300px;
+      margin-top: 10px;
+      border-radius: 8px;
     }
 
-    textarea {
-      width: 100%;
-      padding: 6px;
-      background: #0c0e2c;
-      color: white;
-      border: 1px solid #444;
-      border-radius: 5px;
-      resize: vertical;
-    }
-
-    audio, video {
-      width: 200px;
+    .evaluation {
+      background: #003c4a;
+      color: #aaffff;
+      margin-top: 15px;
+      padding: 12px;
+      border-radius: 8px;
     }
   </style>
 </head>
 <body>
+  <h1>📊 Panel de RH - Evaluación de Sesiones</h1>
 
-  <h1>📊 Panel de Evaluación - RH</h1>
+  {% for row in data %}
+    <div class="session">
+      <div class="meta">
+        👤 <strong>{{ row[0] }}</strong> | 📧 {{ row[1] }} | 🧠 Escenario: {{ row[2] }} <br>
+        🕒 {{ row[6] }}
+      </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Nombre</th>
-        <th>Correo</th>
-        <th>Escenario</th>
-        <th>Pregunta</th>
-        <th>Respuesta Leo</th>
-        <th>Video</th>
-        <th>Fecha</th>
-        <th>Evaluación RH</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in data %}
-      <tr>
-        <td>{{ row[0] }}</td>
-        <td>{{ row[1] }}</td>
-        <td>{{ row[2] }}</td>
-        <td>{{ row[3] }}</td>
-        <td>{{ row[4] }}</td>
-        <td>
-          {% if row[5] %}
-            <video controls>
-              <source src="/{{ row[5] }}" type="video/webm">
-              Tu navegador no soporta video.
-            </video>
-          {% else %}
-            —
-          {% endif %}
-        </td>
-        <td>{{ row[6][:16] }}</td>
-        <td><textarea placeholder="Observaciones..."></textarea></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      <div class="chat-log">
+        <div class="message user">🗣 <strong>Participante:</strong> {{ row[3] }}</div>
+        <div class="message leo">🤖 <strong>Leo:</strong> {{ row[4] }}</div>
+      </div>
 
+      {% if row[5] %}
+        <video controls src="/{{ row[5] }}"></video>
+      {% else %}
+        <p style="color: gray;">🎥 No se encontró video para esta sesión.</p>
+      {% endif %}
+
+      <div class="evaluation">
+        🧠 <strong>Evaluación IA:</strong><br>
+        Esta sección analizará pronto el desempeño del participante usando modelos de lenguaje natural. Se mostrará un resumen con fortalezas, áreas de mejora y recomendaciones para RH.
+      </div>
+    </div>
+  {% endfor %}
 </body>
 </html>
