@@ -97,120 +97,115 @@
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        console.log("✅ Permiso de cámara/micrófono concedido");
-        status.textContent = "Permiso concedido. Iniciando sesión con Leo...";
-
-        const preview = document.createElement('video');
-        preview.srcObject = stream;
-        preview.autoplay = true;
-        preview.muted = true;
-        preview.style.width = '200px';
-        preview.style.position = 'fixed';
-        preview.style.bottom = '20px';
-        preview.style.left = '20px';
-        preview.id = 'preview-video';
-        document.body.appendChild(preview);
-
-        recorder = new MediaRecorder(stream);
-        recorder.ondataavailable = e => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-
-        recorder.onstop = async () => {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          const formData = new FormData();
-          formData.append('video', blob);
-          formData.append('name', name);
-          formData.append('email', email);
-
-          await fetch('/upload_video', {
-            method: 'POST',
-            body: formData
-          });
-
-          confirmation.style.display = 'block';
-          setTimeout(() => {
-            window.location.href = "/";
-          }, 4000);
-        };
-
-        recorder.start();
-        console.log("🎥 Grabación iniciada");
-        endBtn.style.display = "inline-block";
-
-        let lastInput = "";
-        const container = document.getElementById("chat-container");
-
-        const DIDAgentModule = await import('https://agent.d-id.com/v1/index.js');
-        agent = new DIDAgentModule.Agent({
-          name: 'Leo',
-          mode: 'fabio',
-          agentId: 'agt_8nBIc-s-',
-          clientKey: 'Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN',
-          stream: true,
-          voice: { lang: 'es-ES' }
-        });
-
-        agent.mount(document.getElementById("ai-agent"));
-        agent.on('input', (text) => {
-          lastInput = text;
-          const userMsg = document.createElement("div");
-          userMsg.className = "message user";
-          userMsg.textContent = text;
-          container.appendChild(userMsg);
-        });
-
-        agent.on('response', async (text) => {
-          const leoMsg = document.createElement("div");
-          leoMsg.className = "message leo";
-          leoMsg.textContent = text;
-          container.appendChild(leoMsg);
-
-          await fetch('/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: name,
-              email: email,
-              message: lastInput,
-              response: text,
-              scenario: scenario
-            })
-          });
-        });
-
-        agent.start();
-        console.log("🟢 Leo iniciado");
-
-        endBtn.addEventListener("click", () => {
-          if (recorder && recorder.state === "recording") {
-            console.log("📤 Deteniendo grabación y limpiando...");
-            recorder.stop();
-            endBtn.disabled = true;
-            endBtn.textContent = "Guardando...";
-
-            if (agent && agent.unmount) {
-              agent.unmount();
-              console.log("🧹 Leo desmontado");
-            }
-
-            document.getElementById("ai-agent").innerHTML = "";
-            const preview = document.getElementById("preview-video");
-            if (preview) preview.remove();
-
-            stream.getTracks().forEach(track => track.stop());
-            console.log("🛑 Cámara y micrófono detenidos");
-          } else {
-            console.warn("⛔ No se está grabando. Estado:", recorder?.state);
-            alert("No se está grabando actualmente.");
-          }
-        });
-
       } catch (err) {
-        console.error("❌ Acceso denegado o error de permisos:", err);
+        console.error("❌ Error accediendo a medios:", err);
         status.textContent = "❌ No se pudo acceder a tu cámara/micrófono. Debes permitir acceso para continuar.";
-        alert("Por favor permite acceso a cámara y micrófono en tu navegador.");
+        alert("Debes permitir acceso para iniciar la sesión.");
+        return;
       }
+
+      // Si llegamos aquí, los permisos están activos
+      console.log("✅ Permisos de cámara/micrófono activos");
+      status.textContent = "Permiso concedido. Iniciando sesión con Leo...";
+
+      const preview = document.createElement('video');
+      preview.srcObject = stream;
+      preview.autoplay = true;
+      preview.muted = true;
+      preview.style.width = '200px';
+      preview.style.position = 'fixed';
+      preview.style.bottom = '20px';
+      preview.style.left = '20px';
+      preview.id = 'preview-video';
+      document.body.appendChild(preview);
+
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = e => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const formData = new FormData();
+        formData.append('video', blob);
+        formData.append('name', name);
+        formData.append('email', email);
+
+        await fetch('/upload_video', {
+          method: 'POST',
+          body: formData
+        });
+
+        confirmation.style.display = 'block';
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 4000);
+      };
+
+      recorder.start();
+      console.log("🎥 Grabación iniciada");
+      endBtn.style.display = "inline-block";
+
+      const container = document.getElementById("chat-container");
+      let lastInput = "";
+
+      const DIDAgentModule = await import('https://agent.d-id.com/v1/index.js');
+      agent = new DIDAgentModule.Agent({
+        name: 'Leo',
+        mode: 'fabio',
+        agentId: 'agt_8nBIc-s-',
+        clientKey: 'Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN',
+        stream: true,
+        voice: { lang: 'es-ES' }
+      });
+
+      agent.mount(document.getElementById("ai-agent"));
+      agent.on('input', (text) => {
+        lastInput = text;
+        const userMsg = document.createElement("div");
+        userMsg.className = "message user";
+        userMsg.textContent = text;
+        container.appendChild(userMsg);
+      });
+
+      agent.on('response', async (text) => {
+        const leoMsg = document.createElement("div");
+        leoMsg.className = "message leo";
+        leoMsg.textContent = text;
+        container.appendChild(leoMsg);
+
+        await fetch('/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            email: email,
+            message: lastInput,
+            response: text,
+            scenario: scenario
+          })
+        });
+      });
+
+      agent.start();
+      console.log("🟢 Leo iniciado");
+
+      endBtn.addEventListener("click", () => {
+        if (recorder && recorder.state === "recording") {
+          recorder.stop();
+          endBtn.disabled = true;
+          endBtn.textContent = "Guardando...";
+
+          if (agent && agent.unmount) agent.unmount();
+          document.getElementById("ai-agent").innerHTML = "";
+          const preview = document.getElementById("preview-video");
+          if (preview) preview.remove();
+          stream.getTracks().forEach(track => track.stop());
+          console.log("🛑 Grabación y medios detenidos");
+        } else {
+          alert("No se está grabando actualmente.");
+        }
+      });
     });
   </script>
 </body>
