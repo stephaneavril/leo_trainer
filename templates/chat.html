@@ -36,13 +36,6 @@
     .user { align-self: flex-end; background: #00bfff; color: black; }
     .leo  { align-self: flex-start; background: #333; }
 
-    #ai-agent {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 1000;
-    }
-
     #end-btn {
       margin-top: 40px;
       padding: 12px 30px;
@@ -68,6 +61,15 @@
       to { opacity: 1; }
     }
   </style>
+  <script
+    type="module"
+    src="https://agent.d-id.com/v1/index.js"
+    data-name="did-agent"
+    data-mode="fabio"
+    data-client-key="Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN"
+    data-agent-id="agt_8nBIc-s-"
+    data-monitor="true">
+  </script>
 </head>
 <body>
 
@@ -76,11 +78,9 @@
 
   <div id="chat-container"></div>
   <button id="end-btn">Finalizar sesión</button>
-
-  <div id="ai-agent"></div>
   <div id="confirmation">✅ ¡Gracias por tu participación! Tu sesión ha sido registrada correctamente.</div>
 
-  <script type="module">
+  <script>
     document.addEventListener("DOMContentLoaded", async () => {
       const name = "{{ name }}";
       const email = "{{ email }}";
@@ -93,7 +93,6 @@
       let recorder;
       let chunks = [];
       let stream;
-      let agent;
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
@@ -104,7 +103,6 @@
         return;
       }
 
-      // Si llegamos aquí, los permisos están activos
       console.log("✅ Permisos de cámara/micrófono activos");
       status.textContent = "Permiso concedido. Iniciando sesión con Leo...";
 
@@ -131,10 +129,16 @@
         formData.append('name', name);
         formData.append('email', email);
 
-        await fetch('/upload_video', {
+        const uploadResp = await fetch('/upload_video', {
           method: 'POST',
           body: formData
         });
+
+        if (!uploadResp.ok) {
+          console.error("❌ Error subiendo video");
+          alert("Error subiendo la grabación. Intenta nuevamente.");
+          return;
+        }
 
         confirmation.style.display = 'block';
         setTimeout(() => {
@@ -146,58 +150,12 @@
       console.log("🎥 Grabación iniciada");
       endBtn.style.display = "inline-block";
 
-      const container = document.getElementById("chat-container");
-      let lastInput = "";
-
-      const DIDAgentModule = await import('https://agent.d-id.com/v1/index.js');
-      agent = new DIDAgentModule.Agent({
-        name: 'Leo',
-        mode: 'fabio',
-        agentId: 'agt_8nBIc-s-',
-        clientKey: 'Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN',
-        stream: true,
-        voice: { lang: 'es-ES' }
-      });
-
-      agent.mount(document.getElementById("ai-agent"));
-      agent.on('input', (text) => {
-        lastInput = text;
-        const userMsg = document.createElement("div");
-        userMsg.className = "message user";
-        userMsg.textContent = text;
-        container.appendChild(userMsg);
-      });
-
-      agent.on('response', async (text) => {
-        const leoMsg = document.createElement("div");
-        leoMsg.className = "message leo";
-        leoMsg.textContent = text;
-        container.appendChild(leoMsg);
-
-        await fetch('/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: name,
-            email: email,
-            message: lastInput,
-            response: text,
-            scenario: scenario
-          })
-        });
-      });
-
-      agent.start();
-      console.log("🟢 Leo iniciado");
-
       endBtn.addEventListener("click", () => {
         if (recorder && recorder.state === "recording") {
           recorder.stop();
           endBtn.disabled = true;
           endBtn.textContent = "Guardando...";
 
-          if (agent && agent.unmount) agent.unmount();
-          document.getElementById("ai-agent").innerHTML = "";
           const preview = document.getElementById("preview-video");
           if (preview) preview.remove();
           stream.getTracks().forEach(track => track.stop());
@@ -210,3 +168,4 @@
   </script>
 </body>
 </html>
+  
