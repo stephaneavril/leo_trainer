@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Gestión de Usuarios - RH</title>
+  <style>
+    body {
+      background-color: #0c0e2c;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      padding: 30px;
+    }
+
+    h1 {
+      color: #00bfff;
+      text-align: center;
+    }
+
+    form {
+      background: #1c1e3c;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 30px;
+    }
+
+    input, button {
+      margin: 5px;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      font-size: 14px;
+    }
+
+    input {
+      width: 200px;
+    }
+
+    button {
+      background-color: #00bfff;
+      color: black;
+      cursor: pointer;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 20px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 10px;
+      border-bottom: 1px solid #555;
+      text-align: left;
+    }
+
+    .inactive {
+      color: gray;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>👥 Gestión de Usuarios</h1>
+
+  <form method="POST">
+    <input name="name" placeholder="Nombre completo" required />
+    <input name="email" placeholder="Correo electrónico" required />
+    <input name="start_date" type="date" required />
+    <input name="end_date" type="date" required />
+    <button type="submit">➕ Agregar Usuario</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Nombre</th>
+        <th>Email</th>
+        <th>Desde</th>
+        <th>Hasta</th>
+        <th>Estado</th>
+        <th>Acción</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr class="{{ 'inactive' if u[5] == 0 else '' }}">
+          <td>{{ u[1] }}</td>
+          <td>{{ u[2] }}</td>
+          <td>{{ u[3] }}</td>
+          <td>{{ u[4] }}</td>
+          <td>{{ 'Activo' if u[5] == 1 else 'Inactivo' }}</td>
+          <td>
+            {% if u[5] == 1 %}
+              <a href="/admin/users/deactivate/{{ u[0] }}" style="color: red;">Desactivar</a>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+</body>
+</html>

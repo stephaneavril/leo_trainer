@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Resumen de Desempeño - RH</title>
+  <style>
+    body {
+      background-color: #0c0e2c;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      text-align: center;
+      padding: 40px;
+    }
+
+    h1 {
+      color: #00bfff;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      color: #00ffcc;
+      margin-top: 40px;
+    }
+
+    img {
+      margin-top: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 10px #000a;
+      max-width: 90%;
+      height: auto;
+    }
+
+    .buttons {
+      margin-top: 50px;
+    }
+
+    .buttons a {
+      display: inline-block;
+      margin: 10px;
+      padding: 12px 20px;
+      background-color: #00bfff;
+      color: black;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: bold;
+    }
+
+    .buttons a:hover {
+      background-color: #009acd;
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Resumen de Sesiones</h1>
+
+  <h2>👤 Número de sesiones por usuario</h2>
+  <img src="{{ plot_url }}" alt="Gráfico de sesiones por usuario">
+
+  <h2>📈 Métricas clave por escenario</h2>
+  <img src="{{ kpi_url }}" alt="KPI por escenario">
+
+  <div class="buttons">
+    <a href="/admin">🔍 Ver todas las sesiones</a>
+    <a href="/export">📥 Descargar Excel</a>
+  </div>
+</body>
+</html>

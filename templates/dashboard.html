@@ -1,127 +1,93 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard Leo</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mi progreso con Leo</title>
   <style>
     body {
-      margin: 0;
       font-family: 'Segoe UI', sans-serif;
       background-color: #f4f6fa;
       color: #333;
+      margin: 0;
     }
 
     header {
-      background: #0c0e2c;
+      background-color: #0c0e2c;
+      padding: 20px;
       color: white;
-      padding: 20px 40px;
-      text-align: left;
-    }
-
-    header h1 {
-      margin: 0;
-      font-size: 24px;
     }
 
     .container {
-      padding: 30px 40px;
+      padding: 30px;
     }
 
-    .card-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 20px;
-      margin-top: 20px;
-    }
-
-    .card {
-      background: white;
-      border-radius: 10px;
-      padding: 20px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-      width: 250px;
-      text-align: center;
-      transition: transform 0.2s ease;
-    }
-
-    .card:hover {
-      transform: translateY(-5px);
-    }
-
-    .card h3 {
-      margin: 10px 0;
-    }
-
-    .card form button {
-      padding: 10px 20px;
-      border: none;
-      background: #00bfff;
-      color: white;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-
-    .section-title {
+    h2 {
       margin-top: 40px;
-      font-size: 20px;
       color: #0c0e2c;
     }
 
-    .info {
-      background: #e9f0ff;
-      padding: 15px;
-      border-left: 4px solid #00bfff;
+    .record {
+      background: white;
+      padding: 20px;
       margin-top: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+
+    .meta {
+      font-size: 14px;
+      color: #666;
+    }
+
+    .evaluation {
+      margin-top: 10px;
+      padding: 12px;
+      background: #e0f7f7;
+      border-left: 4px solid #00bfff;
+    }
+
+    video {
+      margin-top: 10px;
+      max-width: 100%;
       border-radius: 6px;
+    }
+
+    .no-records {
+      margin-top: 40px;
+      font-size: 18px;
+      color: #999;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>¡Bienvenido/a, {{ name }}!</h1>
-    <p>Centro de entrenamiento virtual con Leo</p>
-  </header>
 
-  <div class="container">
-    <h2 class="section-title">Selecciona tu entrenamiento</h2>
-    <div class="card-grid">
+<header>
+  <h1>🧠 Hola, {{ name }} — Tu progreso con Leo</h1>
+</header>
 
-      <div class="card">
-        <h3>Entrevista con médico</h3>
-        <form action="/chat" method="POST">
-          <input type="hidden" name="name" value="{{ name }}">
-          <input type="hidden" name="email" value="{{ email }}">
-          <input type="hidden" name="scenario" value="Entrevista con médico">
-          <button type="submit">Iniciar</button>
-        </form>
+<div class="container">
+  <h2>Tus sesiones anteriores</h2>
+
+  {% if records %}
+    {% for r in records %}
+      <div class="record">
+        <div class="meta">
+          📅 {{ r[4] }} | 🧪 Escenario: <strong>{{ r[0] }}</strong>
+        </div>
+        <div class="evaluation">
+          <strong>🧠 Evaluación:</strong><br>
+          {{ r[2] }}
+        </div>
+        {% if r[3] %}
+          <video controls src="/{{ r[3] }}"></video>
+        {% endif %}
       </div>
+    {% endfor %}
+  {% else %}
+    <p class="no-records">No has realizado sesiones todavía. ¡Comienza una con Leo!</p>
+  {% endif %}
+</div>
 
-      <div class="card">
-        <h3>Coaching para representante</h3>
-        <form action="/chat" method="POST">
-          <input type="hidden" name="name" value="{{ name }}">
-          <input type="hidden" name="email" value="{{ email }}">
-          <input type="hidden" name="scenario" value="Coaching para representante">
-          <button type="submit">Iniciar</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <h3>Capacitación farmacéutico</h3>
-        <form action="/chat" method="POST">
-          <input type="hidden" name="name" value="{{ name }}">
-          <input type="hidden" name="email" value="{{ email }}">
-          <input type="hidden" name="scenario" value="Capacitación para farmacéutico">
-          <button type="submit">Iniciar</button>
-        </form>
-      </div>
-
-    </div>
-
-    <div class="info">
-      <strong>Próximamente:</strong> Tu historial de sesiones, evaluaciones, y progreso estará disponible aquí para ayudarte a mejorar continuamente.
-    </div>
-  </div>
 </body>
 </html>

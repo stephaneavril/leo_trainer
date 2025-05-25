@@ -2,7 +2,6 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Panel de RH - Sesiones con Leo</title>
   <style>
     body {
@@ -60,6 +59,11 @@
       padding: 12px;
       border-radius: 8px;
     }
+
+    .evaluation.rh {
+      background: #440000;
+      color: #ffbbbb;
+    }
   </style>
 </head>
 <body>
@@ -84,8 +88,13 @@
       {% endif %}
 
       <div class="evaluation">
-        🧠 <strong>Evaluación IA:</strong><br>
-        Esta sección analizará pronto el desempeño del participante usando modelos de lenguaje natural. Se mostrará un resumen con fortalezas, áreas de mejora y recomendaciones para RH.
+        ✅ <strong>Resumen para usuario:</strong><br>
+        {{ row[7] }}
+      </div>
+
+      <div class="evaluation rh">
+        🧠 <strong>Análisis para RH:</strong><br>
+        {{ row[8] }}
       </div>
     </div>
   {% endfor %}
