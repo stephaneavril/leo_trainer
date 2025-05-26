@@ -60,7 +60,7 @@ def evaluate_interaction(user_text, leo_text):
     except Exception as e:
         gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
 
-    public_summary = textwrap.dedent(f"""
+        public_summary = textwrap.dedent(f"""
         👏 {gpt_feedback}
 
         {visual_feedback}
@@ -70,10 +70,10 @@ def evaluate_interaction(user_text, leo_text):
         - Refuerza el uso del modelo de ventas Da Vinci.
         - Recuerda manejar bien cada objeción médica.
         - Mantén contacto visual con la cámara y buena presencia.
-    ")
+    """)
 
     internal_summary = textwrap.dedent(f"""
-            Evaluación técnica (RH):
+        Evaluación técnica (RH):
         - Claridad en la comunicación: {'Alta' if score >= 6 else 'Media' if score >= 3 else 'Baja'}
         - Aplicación del modelo de ventas Da Vinci: {'Mencionado' if 'da vinci' in user_text.lower() else 'No evidenciado'}
         - Dominio técnico del producto: {score}/8
@@ -86,7 +86,7 @@ def evaluate_interaction(user_text, leo_text):
         - Enfatizar el cierre con lenguaje de compromiso.
         - Validar objeciones planteadas por el médico antes de responder.
         - Mostrar actitud profesional ante cámara.
-    ")
+    """)
 
     return {
         "public": public_summary.strip(),
