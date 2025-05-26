@@ -171,3 +171,7 @@ def log_full_session():
     conn.close()
 
     return jsonify({"status": "ok", "evaluation": public_summary})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))  # Render.com define PORT
+    app.run(host="0.0.0.0", port=port, debug=True)
