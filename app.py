@@ -161,6 +161,10 @@ def dashboard():
 
     return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds)
 
+@app.route("/video/<path:filename>")
+def serve_video(filename):
+    return send_file(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+
 @app.route("/upload_video", methods=["POST"])
 def upload_video():
     name = request.form.get("name")
@@ -176,19 +180,13 @@ def upload_video():
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        SELECT id FROM interactions
-        WHERE name = ? AND email = ? AND audio_path IS NULL
-        ORDER BY timestamp DESC LIMIT 1
-    """, (name, email))
+    c.execute("SELECT id FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
     row = c.fetchone()
-
     if row:
-        c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (filepath, row[0]))
+        c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (filename, row[0]))
         conn.commit()
-
     conn.close()
-    return jsonify({"status": "saved", "path": filepath})
+    return jsonify({"status": "saved", "path": filename})
 
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
@@ -214,13 +212,31 @@ def log_full_session():
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration))
     conn.commit()
     conn.close()
 
     return jsonify({"status": "ok", "evaluation": public_summary})
 
+@app.route("/admin")
+def admin_panel():
+    if not session.get("admin"):
+        return redirect("/login")
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh
+        FROM interactions
+        ORDER BY timestamp DESC
+    """)
+    data = c.fetchall()
+    conn.close()
+
+    return render_template("admin.html", data=data)
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Render.com define PORT
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)

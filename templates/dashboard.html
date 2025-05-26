@@ -97,9 +97,25 @@
     .session-entry {
       background: white;
       padding: 15px;
-      margin-bottom: 10px;
+      margin-bottom: 15px;
       border-radius: 6px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
+    .session-entry video {
+      width: 100%;
+      margin-top: 10px;
+      border-radius: 6px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #0c0e2c;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      margin-top: 5px;
     }
   </style>
 </head>
@@ -168,18 +184,11 @@
           <div class="session-entry">
             <strong>Escenario:</strong> {{ r[0] }}<br>
             <strong>Fecha:</strong> {{ r[4] }}<br>
-            <strong>Resumen IA:</strong> {{ r[2] }}<br>
-            {% if r[2] %}
-              {% if "❌" in r[2] %}
-                <span style="color: red;">❌</span>
-              {% elif "⚠️" in r[2] %}
-                <span style="color: orange;">⚠️</span>
-              {% else %}
-                <span style="color: green;">✔️</span>
-              {% endif %}
-            {% endif %}
-            <br>
-            {% if r[3] %}<a href="/video/{{ r[3] }}" target="_blank">📹 Ver video</a>{% endif %}
+            <strong>Resumen IA:</strong>
+            <div style="margin-top: 5px; margin-bottom: 5px; color: #2c3e50;">
+              <em>{{ r[2] }}</em>
+            </div>
+            {% if r[3] %}<video controls src="/video/{{ r[3] }}"></video>{% endif %}
           </div>
         {% endfor %}
       {% else %}

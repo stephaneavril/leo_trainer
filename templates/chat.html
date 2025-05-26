@@ -97,6 +97,8 @@
   </div>
 
   <script>
+    let messages = []; // Captura del diálogo real
+
     document.addEventListener("DOMContentLoaded", async () => {
       const name = "{{ name }}";
       const email = "{{ email }}";
@@ -120,7 +122,7 @@
         const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
         const seconds = (duration % 60).toString().padStart(2, '0');
         timerEl.textContent = `Duración: ${minutes}:${seconds}`;
-      }
+      };
 
       const endSession = async () => {
         if (sessionEnded) return;
@@ -129,38 +131,51 @@
 
         const duration = 600 - countdown;
 
-        if (chunks.length === 0) {
-          alert("⚠️ No se pudo grabar el video. Asegúrate de permitir acceso a la cámara y micrófono.");
-        }
-
         document.getElementById("recording-indicator")?.remove();
         endBtn.disabled = true;
         endBtn.textContent = "Guardando...";
         stream.getTracks().forEach(track => track.stop());
         document.getElementById("preview-video")?.remove();
-
         recorder.stop();
 
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const formData = new FormData();
-        formData.append('video', blob);
-        formData.append('name', name);
-        formData.append('email', email);
-        await fetch('/upload_video', { method: 'POST', body: formData });
+        await new Promise(resolve => { recorder.onstop = resolve; });
 
-        const res = await fetch('/log_full_session', {
+        const sessionRes = await fetch('/log_full_session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, scenario, conversation: [], duration })
+          body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
         });
 
-        const data = await res.json();
+        const sessionData = await sessionRes.json();
+
+        if (!sessionData.status || sessionData.status !== 'ok') {
+          alert("⚠️ Error al guardar la sesión. Intenta nuevamente.");
+          return;
+        }
+
+        if (chunks.length > 0) {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const formData = new FormData();
+          formData.append('video', blob);
+          formData.append('name', name);
+          formData.append('email', email);
+          const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
+          const videoData = await videoRes.json();
+          if (!videoData.status || videoData.status !== 'saved') {
+            alert("⚠️ Hubo un problema al subir el video.");
+          }
+        } else {
+          alert("⚠️ No se detectó grabación de video.");
+        }
+
+        evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
         summaryBox.style.display = 'block';
-        evalText.textContent = data.evaluation || "Evaluación no disponible.";
         endBtn.style.display = "none";
         timerEl.style.display = "none";
-        dashBtn.style.display = "inline-block";
-        document.getElementById("dashboardForm").submit();
+
+        setTimeout(() => {
+          document.getElementById("dashboardForm").submit();
+        }, 2000);
       };
 
       try {

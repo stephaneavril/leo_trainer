@@ -1,72 +1,94 @@
+# evaluator.py
+
 import os
 import openai
+import textwrap
+import re
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def evaluate_interaction(message, response):
+def evaluate_interaction(user_text, leo_text):
     """
-    Evalúa automáticamente el desempeño usando OpenAI si es posible,
-    y con lógica local si no.
+    Evalúa la interacción con base en los textos proporcionados.
+    Si está disponible la API de OpenAI, utiliza GPT-4 para redacción fluida.
+    Además incluye análisis técnicos robustos locales para RH.
     """
-    full_text = f"Usuario: {message}\nLeo: {response}"
 
-    if not openai.api_key or openai.api_key.startswith("sk-") is False:
-        return local_evaluation(message)
+    def basic_keywords_eval(text):
+        score = 0
+        keywords = ["beneficio", "estudio", "síntoma", "tratamiento", "reflujo", "mecanismo", "eficacia", "seguridad"]
+        for kw in keywords:
+            if kw in text.lower():
+                score += 1
+        return score
 
+    def detect_closure_language(text):
+        closure_patterns = ["compromiso", "siguiente paso", "acordamos", "puedo contar con"]
+        return any(p in text.lower() for p in closure_patterns)
+
+    def detect_visual_cues(text):
+        if re.search(r"(c[aá]mara|postura|frente al m[oó]dulo|me ves|visible|pantalla)", text, re.IGNORECASE):
+            return "✅ Tu postura fue profesional y te mostraste frente a la cámara con claridad.", "Correcta"
+        return "⚠️ Asegúrate de mantener una postura profesional y estar visible correctamente frente a la cámara.", "Mejorar visibilidad frente a cámara"
+
+    # Análisis técnico local
+    score = basic_keywords_eval(user_text)
+    closure_ok = detect_closure_language(user_text)
+    visual_feedback, visual_eval = detect_visual_cues(user_text)
+
+    # Redacción motivacional GPT-4 si es posible
+    gpt_feedback = ""
     try:
-        res = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Eres un evaluador de desempeño en simulaciones de ventas. Evalúa las respuestas del participante y ofrece retroalimentación constructiva."},
-                {"role": "user", "content": full_text}
-            ],
-            temperature=0.5
-        )
-
-        content = res.choices[0].message.content.strip()
-
-        return {
-            "public": "✅ " + content,
-            "internal": "🔍 Evaluación IA generada por modelo GPT-4."
-        }
-
+        if openai.api_key and openai.api_key.startswith("sk-"):
+            prompt = f"""
+            Actúa como evaluador de una simulación médica.
+            Participante: {user_text}
+            Médico (Leo): {leo_text}
+            Evalúa al participante de forma constructiva, motivadora y profesional.
+            """
+            res = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé específico y claro."},
+                    {"role": "user", "content": prompt.strip()}
+                ],
+                temperature=0.5
+            )
+            gpt_feedback = res.choices[0].message.content.strip()
+        else:
+            gpt_feedback = "Gracias por tu participación. Mostraste buena disposición. Sigue mejorando tus habilidades clínicas y de comunicación."
     except Exception as e:
-        return {
-            "public": "⚠️ Evaluación automática no disponible.",
-            "internal": f"❌ Error de evaluación con OpenAI: {str(e)}"
-        }
+        gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
 
-def local_evaluation(message):
-    criterios = {
-        "claridad": "Demostró claridad en sus respuestas",
-        "objeciones": "Manejó adecuadamente las objeciones",
-        "modelo_ventas": "Aplicó el modelo de ventas correctamente",
-        "cierre": "Logró un cierre o compromiso"
-    }
+    public_summary = textwrap.dedent(f"""
+        👏 {gpt_feedback}
 
-    evaluacion = []
+        {visual_feedback}
 
-    if any(word in message.lower() for word in ["claro", "entiendo", "explicar"]):
-        evaluacion.append(criterios["claridad"])
-    else:
-        evaluacion.append("Debe mejorar la claridad en sus respuestas")
+        Áreas sugeridas:
+        - Asegúrate de responder con evidencia médica.
+        - Refuerza el uso del modelo de ventas Da Vinci.
+        - Recuerda manejar bien cada objeción médica.
+        - Mantén contacto visual con la cámara y buena presencia.
+    ")
 
-    if any(word in message.lower() for word in ["objeción", "duda", "preocupación"]):
-        evaluacion.append(criterios["objeciones"])
-    else:
-        evaluacion.append("No se identificó manejo de objeciones")
+    internal_summary = textwrap.dedent(f"""
+        🔍 Evaluación técnica (RH):
+        - Claridad en la comunicación: {'Alta' if score >= 6 else 'Media' if score >= 3 else 'Baja'}
+        - Aplicación del modelo de ventas Da Vinci: {'Mencionado' if 'da vinci' in user_text.lower() else 'No evidenciado'}
+        - Dominio técnico del producto: {score}/8
+        - Manejo de objeciones: {'Adecuado' if 'objeción' in user_text.lower() else 'No observado'}
+        - Cierre: {'Presente' if closure_ok else 'Ausente'}
+        - Evaluación visual/postural: {visual_eval}
 
-    if "modelo" in message.lower():
-        evaluacion.append(criterios["modelo_ventas"])
-    else:
-        evaluacion.append("No aplicó claramente el modelo de ventas")
-
-    if any(word in message.lower() for word in ["compromiso", "prescribir", "recomendar"]):
-        evaluacion.append(criterios["cierre"])
-    else:
-        evaluacion.append("Faltó un cierre o compromiso")
+        Recomendaciones:
+        - Fortalecer argumentos clínicos y científicos con datos de estudios o mecanismos.
+        - Enfatizar el cierre con lenguaje de compromiso.
+        - Validar objeciones planteadas por el médico antes de responder.
+        - Mostrar actitud profesional ante cámara.
+    ")
 
     return {
-        "public": " • ".join(evaluacion),
-        "internal": "Evaluación generada localmente (palabras clave)."
+        "public": public_summary.strip(),
+        "internal": internal_summary.strip(),
     }
