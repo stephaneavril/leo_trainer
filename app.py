@@ -2,7 +2,7 @@
 import os
 import sqlite3
 from datetime import datetime, date
-from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file
+from flask import Flask, request, jsonify, render_template, redirect, url_for, send_file, session
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
@@ -10,10 +10,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from evaluator import evaluate_interaction
 
+print("🚀 Iniciando Leo Virtual Trainer...")
+
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 DB_PATH = "logs/interactions.db"
 UPLOAD_FOLDER = "static/audios"
@@ -38,7 +43,8 @@ def init_db():
         audio_path TEXT,
         timestamp TEXT,
         evaluation TEXT,
-        evaluation_rh TEXT
+        evaluation_rh TEXT,
+        duration_seconds INTEGER DEFAULT 0
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +56,23 @@ def init_db():
     )''')
     conn.commit()
     conn.close()
+
+# ----------------------
+# Auth
+# ----------------------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form["password"] == ADMIN_PASSWORD:
+            session["admin"] = True
+            return redirect("/admin")
+        return "Contraseña incorrecta", 403
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
 
 # ----------------------
 # Routes
@@ -68,19 +91,36 @@ def select():
     c = conn.cursor()
     c.execute("SELECT active, start_date, end_date FROM users WHERE email=?", (email,))
     row = c.fetchone()
-    conn.close()
 
     if not row:
+        conn.close()
         return "Usuario no registrado. Contacta a RH.", 403
     if not row[0]:
+        conn.close()
         return "Usuario inactivo. Contacta a RH.", 403
     if not (row[1] <= today <= row[2]):
+        conn.close()
         return "Acceso fuera de rango permitido.", 403
+
+    # Verificar tiempo restante del mes
+    now = datetime.now()
+    start_of_month = now.replace(day=1).isoformat()
+    c.execute("""
+        SELECT SUM(duration_seconds) FROM interactions
+        WHERE email = ? AND timestamp >= ?
+    """, (email, start_of_month))
+    used_seconds = c.fetchone()[0] or 0
+    conn.close()
+
+    if used_seconds >= 600:
+        return "Has alcanzado el límite mensual de uso (10 minutos).", 403
 
     return render_template("selector.html", name=name, email=email)
 
 @app.route("/admin/users", methods=["GET", "POST"])
 def manage_users():
+    if not session.get("admin"):
+        return redirect("/login")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     if request.method == "POST":
@@ -98,6 +138,8 @@ def manage_users():
 
 @app.route("/admin/users/deactivate/<int:user_id>")
 def deactivate_user(user_id):
+    if not session.get("admin"):
+        return redirect("/login")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("UPDATE users SET active=0 WHERE id=?", (user_id,))
@@ -112,24 +154,42 @@ def chat():
     scenario = request.form["scenario"]
     return render_template("chat.html", name=name, email=email, scenario=scenario)
 
-@app.route("/log", methods=["POST"])
-def log_interaction():
-    data = request.get_json()
-    name = data.get("name")
-    email = data.get("email")
-    message = data.get("message")
-    response = data.get("response")
-    scenario = data.get("scenario")
-    timestamp = datetime.now().isoformat()
+@app.route("/dashboard", methods=["POST"])
+def dashboard():
+    name = request.form["name"]
+    email = request.form["email"]
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp)
-                 VALUES (?, ?, ?, ?, ?, ?)""",
-              (name, email, scenario, message, response, timestamp))
-    conn.commit()
+
+    # Obtener sesiones
+    c.execute("""
+        SELECT scenario, message, evaluation, audio_path, timestamp
+        FROM interactions
+        WHERE name=? AND email=?
+        ORDER BY timestamp DESC
+    """, (name, email))
+    records = c.fetchall()
+
+    # Obtener minutos usados
+    c.execute("""
+        SELECT SUM(duration_seconds)
+        FROM interactions
+        WHERE email = ? AND timestamp >= ?
+    """, (email, datetime.now().replace(day=1).isoformat()))
+    used_seconds = c.fetchone()[0] or 0
+    max_seconds = 600
+
     conn.close()
-    return jsonify({"status": "ok"})
+
+    return render_template(
+        "dashboard.html",
+        name=name,
+        email=email,
+        records=records,
+        used_seconds=used_seconds,
+        max_seconds=max_seconds
+    )
 
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
@@ -139,119 +199,30 @@ def log_full_session():
     scenario = data.get("scenario")
     conversation = data.get("conversation", [])
     timestamp = datetime.now().isoformat()
+    duration = int(data.get("duration", 0))
 
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
-    user_text = next((m['text'] for m in reversed(conversation) if m['role'] == 'user'), "")
-    leo_text = next((m['text'] for m in reversed(conversation) if m['role'] == 'leo'), "")
-    summaries = evaluate_interaction(user_text, leo_text)
-    public_summary = summaries.get("public", "")
-    internal_summary = summaries.get("internal", "")
+    user_text = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
+    leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
+
+    try:
+        summaries = evaluate_interaction(user_text, leo_text)
+        public_summary = summaries.get("public", "")
+        internal_summary = summaries.get("internal", "")
+    except Exception as e:
+        public_summary = "⚠️ Evaluación no disponible."
+        internal_summary = f"❌ Error: {str(e)}"
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-              (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary))
+    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration))
     conn.commit()
     conn.close()
 
     return jsonify({"status": "ok", "evaluation": public_summary})
 
-@app.route("/upload_video", methods=["POST"])
-def upload_video():
-    name = request.form.get("name")
-    email = request.form.get("email")
-    video = request.files.get("video")
-
-    if not video:
-        return "No video uploaded", 400
-
-    filename = secure_filename(f"{name}_{datetime.now().isoformat().replace(':', '-')}.webm")
-    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    video.save(save_path)
-
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE interactions SET audio_path=? WHERE name=? AND email=? ORDER BY id DESC LIMIT 1",
-              (save_path, name, email))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "video saved"})
-
-@app.route("/admin")
-def admin_panel():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh FROM interactions ORDER BY id DESC")
-    data = c.fetchall()
-    conn.close()
-    return render_template("admin.html", data=data)
-
-@app.route("/admin/summary")
-def admin_summary():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT name, scenario, evaluation FROM interactions", conn)
-    conn.close()
-
-    user_counts = df['name'].value_counts()
-    plt.figure(figsize=(10,6))
-    user_counts.plot(kind='bar', color='skyblue')
-    plt.title('Número de sesiones por usuario')
-    plt.xlabel('Usuario')
-    plt.ylabel('Cantidad de sesiones')
-    plt.tight_layout()
-    user_plot_path = "static/summary_plot.png"
-    plt.savefig(user_plot_path)
-    plt.close()
-
-    kpi_terms = ["claridad", "objeci", "modelo de ventas", "cierre"]
-    kpi_data = {term: [] for term in kpi_terms}
-    scenarios = df['scenario'].unique()
-
-    for scenario in scenarios:
-        evals = df[df['scenario'] == scenario]['evaluation'].str.lower().fillna("")
-        for term in kpi_terms:
-            kpi_data[term].append(evals.str.contains(term).sum())
-
-    kpi_df = pd.DataFrame(kpi_data, index=scenarios)
-    kpi_df.plot(kind="bar", figsize=(12,6), colormap="coolwarm")
-    plt.title("Métricas clave por escenario")
-    plt.ylabel("# de sesiones con la métrica")
-    plt.xlabel("Escenario")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    kpi_plot_path = "static/kpi_por_escenario.png"
-    plt.savefig(kpi_plot_path)
-    plt.close()
-
-    return render_template("summary.html", plot_url=user_plot_path, kpi_url=kpi_plot_path)
-
-@app.route("/export")
-def export_excel():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh FROM interactions ORDER BY id DESC", conn)
-    conn.close()
-    export_path = "logs/leo_sessions.xlsx"
-    df.to_excel(export_path, index=False)
-    return send_file(export_path, as_attachment=True)
-
-@app.route("/dashboard", methods=["POST"])
-def dashboard():
-    name = request.form["name"]
-    email = request.form["email"]
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        SELECT scenario, message, evaluation, audio_path, timestamp
-        FROM interactions
-        WHERE name=? AND email=?
-        ORDER BY timestamp DESC
-    """, (name, email))
-    records = c.fetchall()
-    conn.close()
-    return render_template("dashboard.html", name=name, email=email, records=records)
-
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True)

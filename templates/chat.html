@@ -13,9 +13,7 @@
       text-align: center;
     }
 
-    h1 {
-      color: #00bfff;
-    }
+    h1 { color: #00bfff; }
 
     #chat-container {
       margin-top: 30px;
@@ -44,11 +42,7 @@
       cursor: pointer;
     }
 
-    #end-btn {
-      background: red;
-      border: none;
-      color: white;
-    }
+    #end-btn { background: red; border: none; color: white; }
 
     #timer {
       background-color: #222;
@@ -117,6 +111,8 @@
 
       let recorder, chunks = [], stream, messages = [];
       let sessionEnded = false;
+      let countdown = 300;
+      let interval;
 
       const updateTimer = (duration) => {
         const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
@@ -127,6 +123,16 @@
       const endSession = async () => {
         if (sessionEnded) return;
         sessionEnded = true;
+        clearInterval(interval);
+
+        const duration = 300 - countdown;
+
+        if (chunks.length === 0) {
+          alert("⚠️ No se pudo grabar el video. Verifica permisos de cámara/micrófono.");
+          endBtn.disabled = false;
+          endBtn.textContent = "Finalizar sesión";
+          return;
+        }
 
         endBtn.disabled = true;
         endBtn.textContent = "Guardando...";
@@ -134,6 +140,7 @@
         document.getElementById("preview-video")?.remove();
 
         recorder.stop();
+
         const blob = new Blob(chunks, { type: 'video/webm' });
         const formData = new FormData();
         formData.append('video', blob);
@@ -144,7 +151,7 @@
         const res = await fetch('/log_full_session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, scenario, conversation: messages })
+          body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
         });
 
         const data = await res.json();
@@ -160,6 +167,7 @@
       } catch (err) {
         console.error("❌ Error accediendo a medios:", err);
         status.textContent = "❌ No se pudo acceder a tu cámara/micrófono. Debes permitir acceso.";
+        status.style.color = "red";
         return;
       }
 
@@ -175,7 +183,8 @@
       document.body.appendChild(preview);
 
       status.textContent = "Permiso concedido. Grabando sesión...";
-      recorder = new MediaRecorder(stream);
+
+      recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
       recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.start();
 
@@ -198,8 +207,7 @@
 
       endBtn.addEventListener("click", endSession);
 
-      let countdown = 300; // 5 minutos
-      const interval = setInterval(() => {
+      interval = setInterval(() => {
         countdown--;
         updateTimer(countdown);
         if (countdown <= 0) {
