@@ -57,7 +57,18 @@ def init_db():
     conn.commit()
     conn.close()
 
+def patch_db_schema():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(interactions)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'evaluation_rh' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
+    conn.commit()
+    conn.close()
+
 init_db()
+patch_db_schema()
 
 # ----------------------
 # Auth
@@ -166,15 +177,17 @@ def upload_video():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        UPDATE interactions
-        SET audio_path = ?
+        SELECT id FROM interactions
         WHERE name = ? AND email = ? AND audio_path IS NULL
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """, (filepath, name, email))
-    conn.commit()
-    conn.close()
+        ORDER BY timestamp DESC LIMIT 1
+    """, (name, email))
+    row = c.fetchone()
 
+    if row:
+        c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (filepath, row[0]))
+        conn.commit()
+
+    conn.close()
     return jsonify({"status": "saved", "path": filepath})
 
 @app.route("/log_full_session", methods=["POST"])

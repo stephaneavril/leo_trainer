@@ -130,10 +130,7 @@
         const duration = 600 - countdown;
 
         if (chunks.length === 0) {
-          alert("✅ Gracias, la sesión se ha guardado correctamente. Puedes regresar al dashboard.");
-          endBtn.disabled = false;
-          endBtn.textContent = "Finalizar sesión";
-          return;
+          alert("⚠️ No se pudo grabar el video. Asegúrate de permitir acceso a la cámara y micrófono.");
         }
 
         document.getElementById("recording-indicator")?.remove();
