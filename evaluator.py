@@ -73,7 +73,7 @@ def evaluate_interaction(user_text, leo_text):
     ")
 
     internal_summary = textwrap.dedent(f"""
-        🔍 Evaluación técnica (RH):
+            Evaluación técnica (RH):
         - Claridad en la comunicación: {'Alta' if score >= 6 else 'Media' if score >= 3 else 'Baja'}
         - Aplicación del modelo de ventas Da Vinci: {'Mencionado' if 'da vinci' in user_text.lower() else 'No evidenciado'}
         - Dominio técnico del producto: {score}/8
