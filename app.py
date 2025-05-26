@@ -179,12 +179,6 @@ def upload_video():
 
     return jsonify({"status": "video saved"})
 
-@app.route("/dashboard", methods=["POST"])
-def dashboard():
-    name = request.form["name"]
-    email = request.form["email"]
-    return render_template("dashboard.html", name=name, email=email)
-
 @app.route("/admin")
 def admin_panel():
     conn = sqlite3.connect(DB_PATH)
