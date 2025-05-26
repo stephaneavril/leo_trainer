@@ -1,19 +1,12 @@
-# evaluator.py
-
 import os
 import openai
 import textwrap
 import re
+from openai import OpenAI
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def evaluate_interaction(user_text, leo_text):
-    """
-    Evalúa la interacción con base en los textos proporcionados.
-    Si está disponible la API de OpenAI, utiliza GPT-4 para redacción fluida.
-    Además incluye análisis técnicos robustos locales para RH.
-    """
-
     def basic_keywords_eval(text):
         score = 0
         keywords = ["beneficio", "estudio", "síntoma", "tratamiento", "reflujo", "mecanismo", "eficacia", "seguridad"]
@@ -31,36 +24,31 @@ def evaluate_interaction(user_text, leo_text):
             return "✅ Tu postura fue profesional y te mostraste frente a la cámara con claridad.", "Correcta"
         return "⚠️ Asegúrate de mantener una postura profesional y estar visible correctamente frente a la cámara.", "Mejorar visibilidad frente a cámara"
 
-    # Análisis técnico local
     score = basic_keywords_eval(user_text)
     closure_ok = detect_closure_language(user_text)
     visual_feedback, visual_eval = detect_visual_cues(user_text)
 
-    # Redacción motivacional GPT-4 si es posible
     gpt_feedback = ""
     try:
-        if openai.api_key and openai.api_key.startswith("sk-"):
-            prompt = f"""
-            Actúa como evaluador de una simulación médica.
-            Participante: {user_text}
-            Médico (Leo): {leo_text}
-            Evalúa al participante de forma constructiva, motivadora y profesional.
-            """
-            res = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé específico y claro."},
-                    {"role": "user", "content": prompt.strip()}
-                ],
-                temperature=0.5
-            )
-            gpt_feedback = res.choices[0].message.content.strip()
-        else:
-            gpt_feedback = "Gracias por tu participación. Mostraste buena disposición. Sigue mejorando tus habilidades clínicas y de comunicación."
+        prompt = f"""
+        Actúa como evaluador de una simulación médica.
+        Participante: {user_text}
+        Médico (Leo): {leo_text}
+        Evalúa al participante de forma constructiva, motivadora y profesional.
+        """
+        res = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé específico y claro."},
+                {"role": "user", "content": prompt.strip()}
+            ],
+            temperature=0.5
+        )
+        gpt_feedback = res.choices[0].message.content.strip()
     except Exception as e:
         gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
 
-        public_summary = textwrap.dedent(f"""
+    public_summary = textwrap.dedent(f"""
         👏 {gpt_feedback}
 
         {visual_feedback}
