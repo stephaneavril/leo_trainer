@@ -101,6 +101,8 @@
       const name = "{{ name }}";
       const email = "{{ email }}";
       const scenario = "{{ scenario }}";
+      const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
+      const remainingTime = Math.max(600 - usedSeconds, 0);
 
       const endBtn = document.getElementById("end-btn");
       const summaryBox = document.getElementById("summary-box");
@@ -111,7 +113,7 @@
 
       let recorder, chunks = [], stream;
       let sessionEnded = false;
-      let countdown = 300;
+      let countdown = remainingTime;
       let interval;
 
       const updateTimer = (duration) => {
@@ -125,10 +127,10 @@
         sessionEnded = true;
         clearInterval(interval);
 
-        const duration = 300 - countdown;
+        const duration = 600 - countdown;
 
         if (chunks.length === 0) {
-          alert("⚠️ No se pudo grabar el video. Verifica permisos de cámara/micrófono.");
+          alert("✅ Gracias, la sesión se ha guardado correctamente. Puedes regresar al dashboard.");
           endBtn.disabled = false;
           endBtn.textContent = "Finalizar sesión";
           return;

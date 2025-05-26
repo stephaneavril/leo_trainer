@@ -120,7 +120,16 @@ def chat():
     name = request.form["name"]
     email = request.form["email"]
     scenario = request.form["scenario"]
-    return render_template("chat.html", name=name, email=email, scenario=scenario)
+
+    now = datetime.now()
+    start_of_month = now.replace(day=1).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    used_seconds = c.fetchone()[0] or 0
+    conn.close()
+
+    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds)
 
 @app.route("/dashboard", methods=["POST"])
 def dashboard():
@@ -140,6 +149,33 @@ def dashboard():
     conn.close()
 
     return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds)
+
+@app.route("/upload_video", methods=["POST"])
+def upload_video():
+    name = request.form.get("name")
+    email = request.form.get("email")
+    file = request.files.get("video")
+
+    if not file:
+        return "No video uploaded", 400
+
+    filename = secure_filename(f"{name}_{email}_{datetime.now().strftime('%Y%m%d%H%M%S')}.webm")
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        UPDATE interactions
+        SET audio_path = ?
+        WHERE name = ? AND email = ? AND audio_path IS NULL
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, (filepath, name, email))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "saved", "path": filepath})
 
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
