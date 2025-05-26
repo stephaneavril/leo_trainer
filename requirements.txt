@@ -1,10 +1,9 @@
 Flask
 flask-cors
-openai
+openai>=1.0.0
 requests
 python-dotenv
 gunicorn
 pandas
 matplotlib
-openai>=1.0.0
 opencv-python
