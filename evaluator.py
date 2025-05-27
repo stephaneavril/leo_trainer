@@ -56,25 +56,34 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
     closure_ok = detect_closure_language(user_text)
     visual_feedback, visual_eval = detect_visual_cues_from_video(video_path) if video_path else ("⚠️ Sin video disponible.", "No evaluado")
 
-    # GPT evaluation (public)
-    try:
-        completion = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé claro, motivador y profesional."},
-                {"role": "user", "content": f"""Actúa como evaluador de una simulación médica.
+    # GPT feedback
+    feedback_level = "alto"
+    if score <= 2 and not closure_ok:
+        gpt_feedback = (
+            "⚠️ Tu desempeño mostró importantes áreas de mejora. No se observaron elementos clave del modelo de ventas ni argumentos clínicos sólidos. "
+            "Revisa el modelo Da Vinci y practica cómo responder con evidencia médica."
+        )
+        feedback_level = "crítico"
+    else:
+        try:
+            completion = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé claro, motivador y profesional."},
+                    {"role": "user", "content": f"""Actúa como evaluador de una simulación médica.
 Participante: {user_text}
 Médico (Leo): {leo_text}
 Evalúa al participante de forma motivadora y constructiva."""}
-            ],
-            temperature=0.4,
-        )
-        gpt_feedback = completion.choices[0].message.content.strip()
-    except OpenAIError as e:
-        gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
+                ],
+                temperature=0.4,
+            )
+            gpt_feedback = completion.choices[0].message.content.strip()
+        except OpenAIError as e:
+            gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
+            feedback_level = "error"
 
     public_summary = textwrap.dedent(f"""
-        👏 {gpt_feedback}
+        {gpt_feedback}
 
         {visual_feedback}
 
@@ -104,4 +113,5 @@ Evalúa al participante de forma motivadora y constructiva."""}
     return {
         "public": public_summary.strip(),
         "internal": internal_summary.strip(),
+        "level": feedback_level
     }
