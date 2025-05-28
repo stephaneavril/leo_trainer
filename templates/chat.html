@@ -73,15 +73,57 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
     }
+
+    #doc-toggle {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: #00bfff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      z-index: 9998;
+      cursor: pointer;
+    }
+
+    #doc-panel {
+      position: fixed;
+      top: 0;
+      right: -400px;
+      width: 350px;
+      height: 100%;
+      background-color: #12163f;
+      color: white;
+      padding: 20px;
+      overflow-y: auto;
+      transition: right 0.3s ease;
+      z-index: 9997;
+      border-left: 2px solid #00bfff;
+    }
   </style>
 </head>
 <body>
-
   <div id="recording-indicator" title="Grabando..."></div>
 
   <h1>🧠 Leo - {{ scenario }}</h1>
   <p id="status">Solicitando permisos para cámara y micrófono...</p>
   <div id="ai-agent" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+
+  <button id="doc-toggle">📘 Ver Documentación</button>
+  <div id="doc-panel">
+    <h2>📋 Documentación útil</h2>
+    <hr style="border-color: #00bfff;">
+    <h3>🧠 Presentación Efectiva</h3>
+    <p>Una presentación efectiva combina saludo profesional, identificación de necesidad clínica y una pregunta abierta que involucre al médico.</p>
+    <h3>🎯 Objecciones Médicas</h3>
+    <p>“Ya uso otro producto” → ¿Qué resultados ha observado?</p>
+    <h3>📊 Pasos de Visita</h3>
+    <p>☑ Saludo ☑ Necesidad ☑ Propuesta ☑ Cierre</p>
+    <h3>⚖ Ética y Regulación</h3>
+    <p>✅ Está permitido compartir evidencia válida.<br>⛔ Está prohibido comparar sin estudios o sugerir usos fuera de indicación.</p>
+  </div>
 
   <button id="end-btn">Finalizar sesión</button>
   <div id="timer">Duración: 05:00</div>
@@ -98,122 +140,10 @@
 
   <script>
     let messages = []; // Captura del diálogo real
-
-    document.addEventListener("DOMContentLoaded", async () => {
-      const name = "{{ name }}";
-      const email = "{{ email }}";
-      const scenario = "{{ scenario }}";
-      const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
-      const remainingTime = Math.max(600 - usedSeconds, 0);
-
-      const endBtn = document.getElementById("end-btn");
-      const summaryBox = document.getElementById("summary-box");
-      const evalText = document.getElementById("evaluation-text");
-      const status = document.getElementById("status");
-      const timerEl = document.getElementById("timer");
-      const dashBtn = document.getElementById("to-dashboard");
-
-      let recorder, chunks = [], stream;
-      let sessionEnded = false;
-      let countdown = remainingTime;
-      let interval;
-
-      const updateTimer = (duration) => {
-        const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
-        const seconds = (duration % 60).toString().padStart(2, '0');
-        timerEl.textContent = `Duración: ${minutes}:${seconds}`;
-      };
-
-      const endSession = async () => {
-        if (sessionEnded) return;
-        sessionEnded = true;
-        clearInterval(interval);
-
-        const duration = 600 - countdown;
-
-        document.getElementById("recording-indicator")?.remove();
-        endBtn.disabled = true;
-        endBtn.textContent = "Guardando...";
-        stream.getTracks().forEach(track => track.stop());
-        document.getElementById("preview-video")?.remove();
-        recorder.stop();
-
-        await new Promise(resolve => { recorder.onstop = resolve; });
-
-        const sessionRes = await fetch('/log_full_session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
-        });
-
-        const sessionData = await sessionRes.json();
-
-        if (!sessionData.status || sessionData.status !== 'ok') {
-          alert("⚠️ Error al guardar la sesión. Intenta nuevamente.");
-          return;
-        }
-
-        if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          const formData = new FormData();
-          formData.append('video', blob);
-          formData.append('name', name);
-          formData.append('email', email);
-          const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
-          const videoData = await videoRes.json();
-          if (!videoData.status || videoData.status !== 'saved') {
-            alert("⚠️ Hubo un problema al subir el video.");
-          }
-        } else {
-          alert("⚠️ No se detectó grabación de video.");
-        }
-
-        evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
-        summaryBox.style.display = 'block';
-        endBtn.style.display = "none";
-        timerEl.style.display = "none";
-
-        setTimeout(() => {
-          document.getElementById("dashboardForm").submit();
-        }, 2000);
-      };
-
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      } catch (err) {
-        console.error("❌ Error accediendo a medios:", err);
-        status.textContent = "❌ No se pudo acceder a tu cámara/micrófono. Debes permitir acceso.";
-        status.style.color = "red";
-        return;
-      }
-
-      const preview = document.createElement("video");
-      preview.srcObject = stream;
-      preview.autoplay = true;
-      preview.muted = true;
-      preview.style.width = "200px";
-      preview.style.position = "fixed";
-      preview.style.bottom = "20px";
-      preview.style.left = "20px";
-      preview.id = "preview-video";
-      document.body.appendChild(preview);
-
-      status.textContent = "Permiso concedido. Grabando sesión...";
-
-      recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      recorder.start();
-
-      endBtn.addEventListener("click", endSession);
-
-      interval = setInterval(() => {
-        countdown--;
-        updateTimer(countdown);
-        if (countdown <= 0) {
-          clearInterval(interval);
-          endSession();
-        }
-      }, 1000);
+    const docBtn = document.getElementById("doc-toggle");
+    const docPanel = document.getElementById("doc-panel");
+    docBtn.addEventListener("click", () => {
+      docPanel.style.right = docPanel.style.right === "0px" ? "-400px" : "0px";
     });
   </script>
 
@@ -228,6 +158,121 @@
     agent.setAttribute("data-monitor", "true");
     document.getElementById("ai-agent").appendChild(agent);
   </script>
+<script>
+  document.addEventListener("DOMContentLoaded", async () => {
+    const name = "{{ name }}";
+    const email = "{{ email }}";
+    const scenario = "{{ scenario }}";
+    const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
+    const remainingTime = Math.max(600 - usedSeconds, 0);
+
+    const endBtn = document.getElementById("end-btn");
+    const summaryBox = document.getElementById("summary-box");
+    const evalText = document.getElementById("evaluation-text");
+    const status = document.getElementById("status");
+    const timerEl = document.getElementById("timer");
+    const dashBtn = document.getElementById("to-dashboard");
+
+    let recorder, chunks = [], stream;
+    let sessionEnded = false;
+    let countdown = remainingTime;
+    let interval;
+
+    const updateTimer = (duration) => {
+      const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
+      const seconds = (duration % 60).toString().padStart(2, '0');
+      timerEl.textContent = `Duración: ${minutes}:${seconds}`;
+    };
+
+    const endSession = async () => {
+      if (sessionEnded) return;
+      sessionEnded = true;
+      clearInterval(interval);
+
+      const duration = 600 - countdown;
+      document.getElementById("recording-indicator")?.remove();
+      endBtn.disabled = true;
+      endBtn.textContent = "Guardando...";
+      stream.getTracks().forEach(track => track.stop());
+      document.getElementById("preview-video")?.remove();
+      recorder.stop();
+
+      await new Promise(resolve => { recorder.onstop = resolve; });
+
+      const sessionRes = await fetch('/log_full_session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
+      });
+
+      const sessionData = await sessionRes.json();
+
+      if (!sessionData.status || sessionData.status !== 'ok') {
+        alert("⚠️ Error al guardar la sesión.");
+        return;
+      }
+
+      if (chunks.length > 0) {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const formData = new FormData();
+        formData.append('video', blob);
+        formData.append('name', name);
+        formData.append('email', email);
+        const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
+        const videoData = await videoRes.json();
+        if (!videoData.status || videoData.status !== 'saved') {
+          alert("⚠️ Problema al subir el video.");
+        }
+      }
+
+      evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
+      summaryBox.style.display = 'block';
+      endBtn.style.display = "none";
+      timerEl.style.display = "none";
+
+      setTimeout(() => {
+        document.getElementById("dashboardForm").submit();
+      }, 3000);
+    };
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    } catch (err) {
+      console.error("❌ Error con cámara/micrófono:", err);
+      status.textContent = "❌ Acceso denegado a cámara o micrófono.";
+      status.style.color = "red";
+      return;
+    }
+
+    const preview = document.createElement("video");
+    preview.srcObject = stream;
+    preview.autoplay = true;
+    preview.muted = true;
+    preview.style.width = "200px";
+    preview.style.position = "fixed";
+    preview.style.bottom = "20px";
+    preview.style.left = "20px";
+    preview.id = "preview-video";
+    document.body.appendChild(preview);
+
+    status.textContent = "Permiso concedido. Grabando sesión...";
+
+    recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.start();
+
+    endBtn.addEventListener("click", endSession);
+
+    interval = setInterval(() => {
+      countdown--;
+      updateTimer(countdown);
+      if (countdown <= 0) {
+        clearInterval(interval);
+        endSession();
+      }
+    }, 1000);
+  });
+</script>
 
 </body>
 </html>

@@ -7,6 +7,8 @@ import cv2
 import numpy as np
 from openai import OpenAI
 from openai import OpenAIError
+from dotenv import load_dotenv
+load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -56,12 +58,22 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
     closure_ok = detect_closure_language(user_text)
     visual_feedback, visual_eval = detect_visual_cues_from_video(video_path) if video_path else ("⚠️ Sin video disponible.", "No evaluado")
 
+    sales_model_score = {
+        "diagnostico": any(kw in user_text.lower() for kw in ["cómo", "qué", "cuándo", "desde cuándo", "por qué"]),
+        "argumentacion": any(kw in user_text.lower() for kw in ["beneficio", "eficaz", "estudio", "seguridad", "mecanismo"]),
+        "validacion": any(kw in user_text.lower() for kw in ["entiendo", "veo que", "comprendo", "es lógico"]),
+        "cierre": closure_ok
+    }
+    model_applied_steps = sum(sales_model_score.values())
+
+    active_listening_score = sum(1 for phrase in ["entiendo", "comprendo", "veo que", "lo que dices", "tiene sentido"] if phrase in user_text.lower())
+
     # GPT feedback
     feedback_level = "alto"
     if score <= 2 and not closure_ok:
         gpt_feedback = (
             "⚠️ Tu desempeño mostró importantes áreas de mejora. No se observaron elementos clave del modelo de ventas ni argumentos clínicos sólidos. "
-            "Revisa el modelo Da Vinci y practica cómo responder con evidencia médica."
+            "Revisa tus argumentos científicos y practica cómo responder con evidencia médica."
         )
         feedback_level = "crítico"
     else:
@@ -89,25 +101,27 @@ Evalúa al participante de forma motivadora y constructiva."""}
 
         Áreas sugeridas:
         - Asegúrate de responder con evidencia médica.
-        - Refuerza el uso del modelo de ventas Da Vinci.
+        - Refuerza el uso del modelo de ventas (sin mencionarlo explícitamente).
         - Recuerda manejar bien cada objeción médica.
         - Mantén contacto visual con la cámara y buena presencia.
     """)
 
     internal_summary = textwrap.dedent(f"""
-        Evaluación técnica (RH):
-        - Claridad en la comunicación: {'Alta' if score >= 6 else 'Media' if score >= 3 else 'Baja'}
-        - Aplicación del modelo de ventas Da Vinci: {'Mencionado' if 'da vinci' in user_text.lower() else 'No evidenciado'}
-        - Dominio técnico del producto: {score}/8
-        - Manejo de objeciones: {'Adecuado' if 'objeción' in user_text.lower() else 'No observado'}
-        - Cierre: {'Presente' if closure_ok else 'Ausente'}
-        - Evaluación visual/postural: {visual_eval}
+        📋 Evaluación técnica (RH):
 
-        Recomendaciones:
-        - Fortalecer argumentos clínicos y científicos.
-        - Enfatizar el cierre con lenguaje de compromiso.
-        - Validar objeciones planteadas por el médico antes de responder.
-        - Mostrar actitud profesional ante cámara.
+        🧠 Conocimientos técnicos
+        - Palabras clave científicas: {score}/8
+
+        🎯 Aplicación del modelo de ventas
+        - Diagnóstico: {'✅' if sales_model_score['diagnostico'] else '❌'}
+        - Argumentación: {'✅' if sales_model_score['argumentacion'] else '❌'}
+        - Validación: {'✅' if sales_model_score['validacion'] else '❌'}
+        - Cierre: {'✅' if sales_model_score['cierre'] else '❌'}
+        ({model_applied_steps}/4 pasos aplicados)
+
+        🎧 Escucha activa: {'Alta' if active_listening_score >= 4 else 'Moderada' if active_listening_score >= 2 else 'Baja'} ({active_listening_score}/5)
+
+        📹 Presencia en video: {visual_eval}
     """)
 
     return {

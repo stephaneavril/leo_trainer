@@ -16,12 +16,26 @@
       height: 100vh;
     }
 
+    form {
+      background-color: #1b1e3d;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0, 191, 255, 0.3);
+      text-align: center;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      color: #00bfff;
+    }
+
     input {
-      padding: 10px;
-      margin: 10px;
-      width: 250px;
+      padding: 12px;
+      margin: 10px 0;
+      width: 260px;
       border: none;
-      border-radius: 5px;
+      border-radius: 6px;
+      font-size: 16px;
     }
 
     button {
@@ -32,18 +46,19 @@
       border-radius: 5px;
       font-weight: bold;
       cursor: pointer;
+      font-size: 16px;
     }
   </style>
 </head>
 <body>
 
-  <h1>🧠 Entrenamiento Virtual con Leo</h1>
   <form action="/dashboard" method="POST">
+    <h1>🧠 Entrenamiento Virtual con Leo</h1>
     <input type="text" name="name" placeholder="Tu nombre" required><br>
     <input type="email" name="email" placeholder="Correo electrónico" required><br>
+    <input type="text" name="token" placeholder="Tu código de acceso" required><br>
     <button type="submit">Comenzar</button>
   </form>
-  
 
 </body>
 </html>
