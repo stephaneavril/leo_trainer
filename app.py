@@ -329,7 +329,8 @@ def admin_panel():
             "summary": summary
         })
 
-    contracted_minutes = len(users) * 30  # 30 minutos por usuario
+    # Tiempo total contratado por RH (independiente del número de usuarios)
+    contracted_minutes = 1050  # fijo: minutos contratados totales por el admin
 
     conn.close()
 
