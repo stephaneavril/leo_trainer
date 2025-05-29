@@ -144,6 +144,11 @@ def chat():
     email = request.form["email"]
     scenario = request.form["scenario"]
 
+    # Guardar en la sesión
+    session["name"] = name
+    session["email"] = email
+    session["scenario"] = scenario
+
     now = datetime.now()
     start_of_month = now.replace(day=1).isoformat()
     conn = sqlite3.connect(DB_PATH)
@@ -263,6 +268,7 @@ def log_full_session():
 
 import secrets  # fuera de las funciones
 
+
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
     if not session.get("admin"):
@@ -315,7 +321,7 @@ def admin_panel():
     for name, email, secs in usage_rows:
         mins = secs // 60
         total_minutes += mins
-        summary = "Buen desempeño general" if mins >= 5 else "Poca actividad, se sugiere seguimiento"
+        summary = "Buen desempeño general" if mins >= 15 else "Actividad moderada" if mins >= 5 else "Poca actividad, se sugiere seguimiento"
         usage_summaries.append({
             "name": name,
             "email": email,
@@ -323,7 +329,7 @@ def admin_panel():
             "summary": summary
         })
 
-    contracted_minutes = 10 * len(users)  # 10 minutos por usuario como ejemplo
+    contracted_minutes = len(users) * 30  # 30 minutos por usuario
 
     conn.close()
 
@@ -335,6 +341,29 @@ def admin_panel():
         total_minutes=total_minutes,
         contracted_minutes=contracted_minutes
     )
+@app.route("/end_session")
+def end_session():
+    name = session.get("name")
+    email = session.get("email")
+    scenario = session.get("scenario", "Desconocido")
+
+    if not name or not email:
+        return redirect("/")
+
+    duration = 300  # 5 minutos en segundos
+    timestamp = datetime.now().isoformat()
+
+    # Guardar en la tabla `interactions` con duración vacía si no hay audio
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO interactions (name, email, scenario, message, response, duration_seconds, timestamp)
+        VALUES (?, ?, ?, '', '', ?, ?)
+    """, (name, email, scenario, duration, timestamp))
+    conn.commit()
+    conn.close()
+
+    return redirect("/dashboard")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

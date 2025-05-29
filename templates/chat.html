@@ -273,6 +273,13 @@
     }, 1000);
   });
 </script>
+<script>
+  // Redirige automáticamente después de 5 minutos (300000 milisegundos)
+  setTimeout(() => {
+    alert("Tu sesión ha finalizado. Serás redirigido al dashboard.");
+    window.location.href = "/end_session";  // Ruta que debes implementar
+  }, 300000); // 5 minutos
+</script>
 
 </body>
 </html>
