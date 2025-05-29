@@ -7,4 +7,4 @@ gunicorn
 pandas
 matplotlib
 opencv-python
-whisper @ git+https://github.com/openai/whisper.git
+openai-whisper @ git+https://github.com/openai/whisper.git
