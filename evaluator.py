@@ -52,7 +52,7 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             else:
                 return "⚠️ Asegúrate de mantenerte visible durante toda la sesión.", "Mejorar visibilidad"
         except Exception as e:
-            return f"⚠️ Error en análisis visual: {str(e)}", "Indeterminado"
+            return f"⚠️ Error en análisis visual: {str(e)}", "No evaluado"
 
     score = basic_keywords_eval(user_text)
     closure_ok = detect_closure_language(user_text)

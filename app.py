@@ -301,8 +301,40 @@ def admin_panel():
     c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
     users = c.fetchall()
 
+    # Calcular minutos usados por usuario
+    c.execute("""
+        SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
+        FROM users u
+        LEFT JOIN interactions i ON u.email = i.email
+        GROUP BY u.name, u.email
+    """)
+    usage_rows = c.fetchall()
+
+    usage_summaries = []
+    total_minutes = 0
+    for name, email, secs in usage_rows:
+        mins = secs // 60
+        total_minutes += mins
+        summary = "Buen desempeño general" if mins >= 5 else "Poca actividad, se sugiere seguimiento"
+        usage_summaries.append({
+            "name": name,
+            "email": email,
+            "minutes": mins,
+            "summary": summary
+        })
+
+    contracted_minutes = 10 * len(users)  # 10 minutos por usuario como ejemplo
+
     conn.close()
-    return render_template("admin.html", data=data, users=users)
+
+    return render_template(
+        "admin.html",
+        data=data,
+        users=users,
+        usage_summaries=usage_summaries,
+        total_minutes=total_minutes,
+        contracted_minutes=contracted_minutes
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

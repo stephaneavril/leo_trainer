@@ -117,6 +117,27 @@
     form button:hover {
       background-color: #009acd;
     }
+
+    .summary-row {
+      background: #e3f2fd;
+      padding: 10px;
+      border-radius: 8px;
+      margin-top: 30px;
+    }
+
+    .progress-bar {
+      background: #ddd;
+      border-radius: 6px;
+      overflow: hidden;
+      height: 20px;
+      margin-top: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: #00bfff;
+      transition: width 0.3s ease;
+    }
   </style>
 </head>
 <body>
@@ -153,6 +174,26 @@
         </div>
       </div>
     {% endfor %}
+
+    <div class="summary-row">
+      <h2>📈 Resumen de Tiempo por Usuario</h2>
+      <table>
+        <tr><th>Nombre</th><th>Email</th><th>Minutos usados</th><th>Resumen ejecutivo</th></tr>
+        {% for summary in usage_summaries %}
+        <tr>
+          <td>{{ summary.name }}</td>
+          <td>{{ summary.email }}</td>
+          <td>{{ summary.minutes }}</td>
+          <td>{{ summary.summary }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+
+      <h3>Tiempo Total Usado: {{ total_minutes }} / {{ contracted_minutes }} minutos</h3>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: {{ (total_minutes / contracted_minutes) * 100 }}%"></div>
+      </div>
+    </div>
 
     <div class="users-section">
       <h2>🔐 Gestión de Usuarios</h2>
