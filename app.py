@@ -7,6 +7,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import openai
+import whisper
 import pandas as pd
 import matplotlib.pyplot as plt
 from evaluator import evaluate_interaction
@@ -16,6 +17,8 @@ print("\U0001F680 Iniciando Leo Virtual Trainer...")
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 client = openai  # ✅ Esto te permite usar client.chat.completions...
+
+whisper_model = whisper.load_model("base")  # solo una vez al cargar la app
 
 app = Flask(__name__)
 CORS(app)
@@ -251,10 +254,29 @@ def log_full_session():
     timestamp = datetime.now().isoformat()
     duration = int(data.get("duration", 0))
 
+    # Buscar el último audio y transcribirlo
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT audio_path FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
+    row = c.fetchone()
+    conn.close()
+
+    if row and row[0]:
+        audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], row[0])
+        try:
+            result = whisper_model.transcribe(audio_file_path)
+            transcribed_text = result['text'].strip()
+        except Exception as e:
+            transcribed_text = f"⚠️ Error de transcripción: {str(e)}"
+    else:
+        transcribed_text = ""
+
+    # Procesar texto transcrito
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
-    user_text = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
+    user_text = transcribed_text
     leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
 
+    # Evaluación IA
     try:
         summaries = evaluate_interaction(user_text, leo_text)
         public_summary = summaries.get("public", "")
@@ -263,7 +285,7 @@ def log_full_session():
         public_summary = "⚠️ Evaluación no disponible."
         internal_summary = f"❌ Error: {str(e)}"
 
-    # Generar consejo personalizado post-sesión (con GPT)
+    # Generar consejo con GPT
     try:
         tip_completion = client.chat.completions.create(
             model="gpt-4",
@@ -281,13 +303,12 @@ def log_full_session():
     except Exception as e:
         tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
 
-    # Guardar interacción incluyendo consejo
+    # Guardar todo
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds, tip)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-          (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration, tip_text))
-
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration, tip_text))
     conn.commit()
     conn.close()
 
