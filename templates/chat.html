@@ -131,6 +131,11 @@
   <div id="summary-box">
     <h2>✅ Resumen de desempeño</h2>
     <p id="evaluation-text"></p>
+    <div id="extra-tip" style="display:none; margin-top: 30px; background: #f5faff; padding: 20px; border-left: 4px solid #00bfff; border-radius: 8px; color: #222;">
+  <h3>🧠 Consejo personalizado de Leo:</h3>
+  <p id="tip-text">Cargando sugerencia...</p>
+</div>
+
     <form id="dashboardForm" action="/dashboard" method="POST">
       <input type="hidden" name="name" value="{{ name }}">
       <input type="hidden" name="email" value="{{ email }}">
@@ -226,6 +231,11 @@
       }
 
       evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
+      if (sessionData.tip) {
+  document.getElementById("tip-text").textContent = sessionData.tip;
+  document.getElementById("extra-tip").style.display = "block";
+}
+
       summaryBox.style.display = 'block';
       endBtn.style.display = "none";
       timerEl.style.display = "none";

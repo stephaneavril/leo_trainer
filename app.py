@@ -256,6 +256,25 @@ def log_full_session():
         public_summary = "⚠️ Evaluación no disponible."
         internal_summary = f"❌ Error: {str(e)}"
 
+    # Generar consejo personalizado post-sesión (con GPT)
+    try:
+        tip_completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Eres un coach médico que ofrece consejos prácticos sobre cómo mejorar las interacciones con doctores."},
+                {"role": "user", "content": f"""Basado en esta conversación:
+
+{user_text}
+
+¿Qué podría hacer mejor el participante la próxima vez? Da 2-3 sugerencias claras y concretas."""}
+            ],
+            temperature=0.5,
+        )
+        tip_text = tip_completion.choices[0].message.content.strip()
+    except Exception as e:
+        tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
+
+    # Guardar interacción
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds)
@@ -264,7 +283,7 @@ def log_full_session():
     conn.commit()
     conn.close()
 
-    return jsonify({"status": "ok", "evaluation": public_summary})
+    return jsonify({"status": "ok", "evaluation": public_summary, "tip": tip_text})
 
 import secrets  # fuera de las funciones
 
