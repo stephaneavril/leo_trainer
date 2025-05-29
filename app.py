@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+import openai
 import pandas as pd
 import matplotlib.pyplot as plt
 from evaluator import evaluate_interaction
@@ -13,6 +14,8 @@ from evaluator import evaluate_interaction
 print("\U0001F680 Iniciando Leo Virtual Trainer...")
 
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+client = openai  # ✅ Esto te permite usar client.chat.completions...
 
 app = Flask(__name__)
 CORS(app)
@@ -66,6 +69,10 @@ def patch_db_schema():
     columns = [col[1] for col in c.fetchall()]
     if 'evaluation_rh' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
+
+    # ✅ Verifica y agrega 'tip' si no existe
+    if 'tip' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
 
     # Verifica y agrega 'token' si no existe
     c.execute("PRAGMA table_info(users)")
@@ -195,7 +202,7 @@ def dashboard():
     used_seconds = c.fetchone()[0] or 0
     max_seconds = 1800
 
-    c.execute("SELECT scenario, message, evaluation, audio_path, timestamp FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
+    c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
     records = c.fetchall()
     conn.close()
 
@@ -274,12 +281,13 @@ def log_full_session():
     except Exception as e:
         tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
 
-    # Guardar interacción
+    # Guardar interacción incluyendo consejo
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration))
+    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds, tip)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+          (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration, tip_text))
+
     conn.commit()
     conn.close()
 
