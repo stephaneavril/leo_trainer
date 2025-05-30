@@ -190,60 +190,65 @@
     };
 
     const endSession = async () => {
-      if (sessionEnded) return;
-      sessionEnded = true;
-      clearInterval(interval);
+  if (sessionEnded) return;
+  sessionEnded = true;
+  clearInterval(interval);
 
-      const duration = 600 - countdown;
-      document.getElementById("recording-indicator")?.remove();
-      endBtn.disabled = true;
-      endBtn.textContent = "Guardando...";
-      stream.getTracks().forEach(track => track.stop());
-      document.getElementById("preview-video")?.remove();
-      recorder.stop();
+  const duration = 600 - countdown;
+  document.getElementById("recording-indicator")?.remove();
+  endBtn.disabled = true;
+  endBtn.textContent = "Guardando...";
+  stream.getTracks().forEach(track => track.stop());
+  document.getElementById("preview-video")?.remove();
+  recorder.stop();
 
-      await new Promise(resolve => { recorder.onstop = resolve; });
+  await new Promise(resolve => { recorder.onstop = resolve; });
 
-      const sessionRes = await fetch('/log_full_session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
-      });
+  // ✅ 1. SUBE PRIMERO EL VIDEO
+  let videoData = null;
+  if (chunks.length > 0) {
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    const formData = new FormData();
+    formData.append('video', blob);
+    formData.append('name', name);
+    formData.append('email', email);
 
-      const sessionData = await sessionRes.json();
+    const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
+    videoData = await videoRes.json();
 
-      if (!sessionData.status || sessionData.status !== 'ok') {
-        alert("⚠️ Error al guardar la sesión.");
-        return;
-      }
+    if (!videoData.status || videoData.status !== 'saved') {
+      alert("⚠️ Problema al subir el video.");
+    }
+  }
 
-      if (chunks.length > 0) {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const formData = new FormData();
-        formData.append('video', blob);
-        formData.append('name', name);
-        formData.append('email', email);
-        const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
-        const videoData = await videoRes.json();
-        if (!videoData.status || videoData.status !== 'saved') {
-          alert("⚠️ Problema al subir el video.");
-        }
-      }
+  // ✅ 2. LUEGO ENVÍA EL REGISTRO DE LA SESIÓN
+  const sessionRes = await fetch('/log_full_session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
+  });
 
-      evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
-      if (sessionData.tip) {
-  document.getElementById("tip-text").textContent = sessionData.tip;
-  document.getElementById("extra-tip").style.display = "block";
-}
+  const sessionData = await sessionRes.json();
 
-      summaryBox.style.display = 'block';
-      endBtn.style.display = "none";
-      timerEl.style.display = "none";
+  if (!sessionData.status || sessionData.status !== 'ok') {
+    alert("⚠️ Error al guardar la sesión.");
+    return;
+  }
 
-      setTimeout(() => {
-        document.getElementById("dashboardForm").submit();
-      }, 3000);
-    };
+  evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
+  if (sessionData.tip) {
+    document.getElementById("tip-text").textContent = sessionData.tip;
+    document.getElementById("extra-tip").style.display = "block";
+  }
+
+  summaryBox.style.display = 'block';
+  endBtn.style.display = "none";
+  timerEl.style.display = "none";
+
+  setTimeout(() => {
+    document.getElementById("dashboardForm").submit();
+  }, 3000);
+};
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
