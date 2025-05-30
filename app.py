@@ -486,6 +486,22 @@ def end_session():
 
     return redirect("/dashboard")
 
+def patch_db_schema():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("PRAGMA table_info(interactions)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'visual_feedback' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
+
+    conn.commit()
+    conn.close()
+
+init_db()
+patch_db_schema()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
