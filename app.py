@@ -231,12 +231,18 @@ def upload_video():
     file = request.files.get("video")
 
     if not file:
-        return "No video uploaded", 400
+        return jsonify({"error": "No se envió ningún archivo de video."}), 400
+
+    if file.filename == '':
+        return jsonify({"error": "Nombre de archivo vacío."}), 400
 
     filename = secure_filename(f"{name}_{email}_{datetime.now().strftime('%Y%m%d%H%M%S')}.webm")
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
 
+    session["last_video_path"] = filename  # Guardar para análisis después
+
+    # Opcional: actualizar la última interacción
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT id FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
@@ -245,27 +251,8 @@ def upload_video():
         c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (filename, row[0]))
         conn.commit()
     conn.close()
+
     return jsonify({"status": "saved", "path": filename})
-
-@app.route("/upload_video", methods=["POST"])
-def upload_video():
-    if 'video' not in request.files:
-        return jsonify({"error": "No se envió ningún archivo de video."}), 400
-
-    file = request.files['video']
-    if file.filename == '':
-        return jsonify({"error": "Nombre de archivo vacío."}), 400
-
-    if file:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-
-        session["last_video_path"] = filename  # ✅ Guardar video para evaluación
-
-        return jsonify({"status": "saved", "path": filename})
-
-    return jsonify({"error": "Error desconocido al subir video."}), 500
 
 from moviepy.editor import VideoFileClip
 import cv2
