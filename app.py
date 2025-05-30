@@ -239,6 +239,7 @@ def upload_video():
     filename = secure_filename(f"{name}_{email}_{datetime.now().strftime('%Y%m%d%H%M%S')}.webm")
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
+    print(f"[UPLOAD] Video guardado en: {filepath}")
 
     session["last_video_path"] = filename  # Guardar para análisis después
 
@@ -289,7 +290,7 @@ def log_full_session():
     video_filename = data.get("video_filename") or session.get("last_video_path")
     posture_feedback = ""
 
-    # 1. TRANSCRIPCIÓN
+    # TRANSCRIPCIÓN
     if audio_filename:
         audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
         if os.path.exists(audio_file_path):
@@ -304,6 +305,10 @@ def log_full_session():
         temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], "temp_audio.wav")
         try:
             video = VideoFileClip(video_path)
+            if video.audio is None:
+                print("⚠️ El video no tiene pista de audio.")
+                raise ValueError("Video sin audio")
+
             video.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
             result = whisper_model.transcribe(temp_audio_path)
             transcribed_text = result.get("text", "").strip()
@@ -311,12 +316,12 @@ def log_full_session():
         except Exception as e:
             print(f"[ERROR] Transcripción desde video fallida: {e}")
 
-    # 2. TEXTO COMPLETO Y ROLES
+    # TEXTO COMPLETO Y ROLES
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
     user_text = transcribed_text or " ".join([m['text'] for m in conversation if m['role'] == 'user'])
     leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
 
-    # 3. EVALUACIÓN GPT
+    # EVALUACIÓN GPT
     try:
         summaries = evaluate_interaction(user_text, leo_text)
         public_summary = summaries.get("public", "")
@@ -326,7 +331,7 @@ def log_full_session():
         internal_summary = f"❌ Error: {str(e)}"
         print(f"[ERROR] Evaluación fallida: {e}")
 
-    # 4. CONSEJO PERSONALIZADO
+    # CONSEJO PERSONALIZADO
     try:
         tip_completion = client.chat.completions.create(
             model="gpt-4",
@@ -341,10 +346,12 @@ def log_full_session():
         tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
         print(f"[ERROR] Consejo fallido: {e}")
 
-    # 5. ANÁLISIS VISUAL
+    # ANÁLISIS VISUAL
     if video_filename:
         try:
-            video_stats = analyze_video_posture(os.path.join(app.config['UPLOAD_FOLDER'], video_filename))
+            video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+            print(f"[VIDEO ANALYSIS] Abriendo video: {video_path}")
+            video_stats = analyze_video_posture(video_path)
             visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
             posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
             print(f"[POSTURA] {posture_feedback}")
@@ -352,7 +359,7 @@ def log_full_session():
             posture_feedback = f"⚠️ Error en análisis visual: {str(e)}"
             print(f"[ERROR] Análisis de postura falló: {e}")
 
-    # 6. GUARDAR EN BASE DE DATOS
+    # GUARDADO EN BD
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
@@ -368,6 +375,14 @@ def log_full_session():
     ))
     conn.commit()
     conn.close()
+
+    # DEPURACIÓN FINAL
+    print(f"[LOG] Recibido video_filename: {video_filename}")
+    print(f"[LOG] Archivo video existe: {os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], video_filename))}")
+    print(f"[TEXT] Transcripción: {transcribed_text}")
+    print(f"[TEXT] Conversación completa: {full_text[:200]}")
+    print(f"[TEXT] Usuario: {user_text[:100]}")
+    print(f"[TEXT] Leo: {leo_text[:100]}")
 
     return jsonify({
         "status": "ok",
