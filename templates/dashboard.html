@@ -128,24 +128,26 @@
   <div class="container">
     <h2 class="section-title">Selecciona tu entrenamiento</h2>
 
-<<div class="info">
-  <h3>📘 Instrucciones clave para tu sesión:</h3>
-  <ul style="text-align: left; line-height: 1.6;">
-    <li>🖱️ Al hacer clic en <strong>"Iniciar"</strong>, serás conectado con el doctor virtual Leo.</li>
-    <li>⏱️ El cronómetro comienza automáticamente (5 minutos por sesión).</li>
-    <li>🎥 Autoriza el acceso a tu <strong>cámara</strong> y <strong>micrófono</strong> cuando se te pida.</li>
-    <li>👨‍⚕️ Haz clic una vez en la ventana del doctor para activarlo. Haz clic en el micrófono y comienza la conversación médica.</li>
-    <li>🗣️ Habla con claridad y presenta tu producto de forma profesional.</li>
-    <li>🤫 Cuando termines de hablar, espera la respuesta del Dr. Leo, el sabe cuando contestar</li>
-    <li>🎤 Si quieres volver a hablar, haz clic otra vez en el micro de la ventana del doctor y continúa.</li>
-    <li>🎯 Sigue el modelo de ventas <strong>Da Vinci</strong>: saludo, necesidad, propuesta, cierre.</li>
-  </ul>
-  <p style="margin-top: 10px;">Tu sesión será evaluada automáticamente por IA. ¡Aprovecha cada minuto!</p>
+<<div style="display: flex; align-items: flex-start; gap: 20px; margin-top: 20px;">
+  <div class="info" style="flex: 1;">
+    <h3>📘 Instrucciones clave para tu sesión:</h3>
+    <ul style="text-align: left; line-height: 1.6;">
+      <li>🖱️ Al hacer clic en <strong>"Iniciar"</strong>, serás conectado con el doctor virtual Leo.</li>
+      <li>⏱️ El cronómetro comienza automáticamente (5 minutos por sesión).</li>
+      <li>🎥 Autoriza el acceso a tu <strong>cámara</strong> y <strong>micrófono</strong> cuando se te pida.</li>
+      <li>👨‍⚕️ Haz clic una vez en la ventana del doctor para activarlo. Haz clic en el micrófono y comienza la conversación médica.</li>
+      <li>🗣️ Habla con claridad y presenta tu producto de forma profesional.</li>
+      <li>🤫 Cuando termines de hablar, espera la respuesta del Dr. Leo, él sabe cuándo contestar</li>
+      <li>🎤 Si quieres volver a hablar, haz clic otra vez en el micro de la ventana del doctor y continúa.</li>
+      <li>🎯 Sigue el modelo de ventas <strong>Da Vinci</strong>: saludo, necesidad, propuesta, cierre.</li>
+    </ul>
+    <p style="margin-top: 10px;">Tu sesión será evaluada automáticamente por IA. ¡Aprovecha cada minuto!</p>
+  </div>
+  <video controls autoplay muted style="width: 300px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
+    <source src="{{ url_for('static', filename='video_intro.mp4') }}" type="video/mp4">
+    Tu navegador no soporta la reproducción de video.
+  </video>
 </div>
-<video controls autoplay muted style="width: 100%; border-radius: 10px; margin-bottom: 20px;">
-  <source src="{{ url_for('static', filename='video_intro.mp4') }}" type="video/mp4">
-  Tu navegador no soporta la reproducción de video.
-</video>
 
     <div class="card-grid">
       <div class="card">

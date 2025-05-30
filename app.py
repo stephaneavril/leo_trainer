@@ -286,7 +286,7 @@ def log_full_session():
 
     transcribed_text = ""
     audio_filename = session.get("last_audio_path")
-    video_filename = session.get("last_video_path")
+    video_filename = data.get("video_filename") or session.get("last_video_path")
     posture_feedback = ""
 
     # 1. TRANSCRIPCIÓN

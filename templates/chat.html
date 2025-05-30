@@ -222,11 +222,19 @@
   }
 
   // ✅ 2. LUEGO ENVÍA EL REGISTRO DE LA SESIÓN
-  const sessionRes = await fetch('/log_full_session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, scenario, conversation: messages, duration })
-  });
+const sessionRes = await fetch('/log_full_session', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    name,
+    email,
+    scenario,
+    conversation: messages,
+    duration,
+    video_filename: videoData?.path || null  // <== importante
+  })
+});
+
 
   const sessionData = await sessionRes.json();
 
