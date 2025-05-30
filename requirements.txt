@@ -9,4 +9,5 @@ matplotlib
 opencv-python
 openai-whisper @ git+https://github.com/openai/whisper.git
 moviepy==1.0.3
+mediapipe
 
