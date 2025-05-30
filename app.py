@@ -308,7 +308,7 @@ def log_full_session():
             if video.audio is None:
                 print("⚠️ El video no tiene pista de audio.")
                 raise ValueError("Video sin audio")
-
+            print("[INFO] Extrayendo audio del video...")
             video.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
             result = whisper_model.transcribe(temp_audio_path)
             transcribed_text = result.get("text", "").strip()
@@ -320,6 +320,16 @@ def log_full_session():
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
     user_text = transcribed_text or " ".join([m['text'] for m in conversation if m['role'] == 'user'])
     leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
+
+    print(f"[DEBUG] USER_TEXT: {user_text[:100]}")
+    print(f"[DEBUG] LEO_TEXT: {leo_text[:100]}")
+    
+    if not user_text.strip() and not leo_text.strip():
+        print("[ERROR] No hay texto de usuario ni de Leo para evaluar.")
+        return jsonify({
+            "status": "error",
+            "error": "No se encontró contenido válido para evaluar. Verifica que el video tenga audio o que se haya registrado la conversación."
+        }), 400
 
     # EVALUACIÓN GPT
     try:
@@ -362,13 +372,11 @@ def log_full_session():
     # GUARDADO EN BD
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO interactions (
-            name, email, scenario, message, response, timestamp,
-            evaluation, evaluation_rh, duration_seconds, tip,
-            audio_path, visual_feedback
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
+    c.execute("""INSERT INTO interactions (
+        name, email, scenario, message, response, timestamp,
+        evaluation, evaluation_rh, duration_seconds, tip,
+        audio_path, visual_feedback
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
         name, email, scenario, full_text, leo_text, timestamp,
         public_summary, internal_summary, duration, tip_text,
         audio_filename or video_filename, posture_feedback
@@ -379,10 +387,10 @@ def log_full_session():
     # DEPURACIÓN FINAL
     print(f"[LOG] Recibido video_filename: {video_filename}")
     print(f"[LOG] Archivo video existe: {os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], video_filename))}")
-    print(f"[TEXT] Transcripción: {transcribed_text}")
-    print(f"[TEXT] Conversación completa: {full_text[:200]}")
-    print(f"[TEXT] Usuario: {user_text[:100]}")
-    print(f"[TEXT] Leo: {leo_text[:100]}")
+    print(f"[TEXT] Transcripción: {transcribed_text[:300]}")
+    print(f"[TEXT] Conversación completa: {full_text[:300]}")
+    print(f"[TEXT] Usuario: {user_text[:300]}")
+    print(f"[TEXT] Leo: {leo_text[:300]}")
 
     return jsonify({
         "status": "ok",
