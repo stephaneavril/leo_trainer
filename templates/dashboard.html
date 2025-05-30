@@ -198,6 +198,13 @@
             <div style="margin-top: 5px; margin-bottom: 5px; color: #2c3e50;">
               <em>{{ r[2] }}</em>
             </div>
+            {% if r[11] %}
+  <div style="background: #fff4e6; border-left: 4px solid #ffa726; padding: 10px; margin-top: 10px; border-radius: 6px;">
+    <strong>🎥 Evaluación visual:</strong>
+    <p style="margin: 5px 0 0 0;">{{ r[11] }}</p>
+  </div>
+{% endif %}
+
             {% if r[5] %}
   <div style="background: #f9fbff; border-left: 4px solid #00bfff; padding: 10px; margin-top: 10px; border-radius: 6px;">
     <strong>🧠 Consejo de Leo:</strong>

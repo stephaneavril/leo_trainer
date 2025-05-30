@@ -11,6 +11,8 @@ import whisper
 import pandas as pd
 import matplotlib.pyplot as plt
 from evaluator import evaluate_interaction
+from moviepy.editor import VideoFileClip  # <= Requerido para análisis de video
+
 
 print("\U0001F680 Iniciando Leo Virtual Trainer...")
 
@@ -245,12 +247,12 @@ def upload_video():
     conn.close()
     return jsonify({"status": "saved", "path": filename})
 
-@app.route("/upload_audio", methods=["POST"])
-def upload_audio():
-    if 'audio' not in request.files:
-        return jsonify({"error": "No se envió ningún archivo de audio."}), 400
+@app.route("/upload_video", methods=["POST"])
+def upload_video():
+    if 'video' not in request.files:
+        return jsonify({"error": "No se envió ningún archivo de video."}), 400
 
-    file = request.files['audio']
+    file = request.files['video']
     if file.filename == '':
         return jsonify({"error": "Nombre de archivo vacío."}), 400
 
@@ -259,11 +261,31 @@ def upload_audio():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
 
-        # Guardar el path del audio en sesión para uso posterior (ej. en log_full_session)
-        session["last_audio_path"] = filename
-        return jsonify({"status": "ok", "path": filename})
+        session["last_video_path"] = filename  # ✅ Guardar video para evaluación
 
-    return jsonify({"error": "Error desconocido al subir archivo."}), 500
+        return jsonify({"status": "saved", "path": filename})
+
+    return jsonify({"error": "Error desconocido al subir video."}), 500
+
+from moviepy.editor import VideoFileClip
+import cv2
+import mediapipe as mp
+
+def analyze_video_posture(video_path):
+    mp_face = mp.solutions.face_detection
+    summary = {"frames_total": 0, "face_detected_frames": 0}
+    cap = cv2.VideoCapture(video_path)
+    with mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.5) as detector:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            summary["frames_total"] += 1
+            results = detector.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if results.detections:
+                summary["face_detected_frames"] += 1
+    cap.release()
+    return summary
 
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
@@ -275,24 +297,39 @@ def log_full_session():
     timestamp = datetime.now().isoformat()
     duration = int(data.get("duration", 0))
 
-    # Transcribir el último audio subido si existe
+    transcribed_text = ""
     audio_filename = session.get("last_audio_path")
+    video_filename = session.get("last_video_path")
+    posture_feedback = ""
+
+    # 1. TRANSCRIPCIÓN
     if audio_filename:
         audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
+        if os.path.exists(audio_file_path):
+            try:
+                result = whisper_model.transcribe(audio_file_path)
+                transcribed_text = result.get("text", "").strip()
+                print(f"[INFO] Transcripción de audio: {transcribed_text[:100]}...")
+            except Exception as e:
+                print(f"[ERROR] Fallo transcripción de audio: {e}")
+    elif video_filename:
+        video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+        temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], "temp_audio.wav")
         try:
-            result = whisper_model.transcribe(audio_file_path)
-            transcribed_text = result['text'].strip()
+            video = VideoFileClip(video_path)
+            video.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+            result = whisper_model.transcribe(temp_audio_path)
+            transcribed_text = result.get("text", "").strip()
+            print(f"[INFO] Transcripción desde video: {transcribed_text[:100]}...")
         except Exception as e:
-            transcribed_text = f"⚠️ Error de transcripción: {str(e)}"
-    else:
-        transcribed_text = ""
+            print(f"[ERROR] Transcripción desde video fallida: {e}")
 
-    # Armar textos para evaluación
+    # 2. TEXTO COMPLETO Y ROLES
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
-    user_text = transcribed_text
+    user_text = transcribed_text or " ".join([m['text'] for m in conversation if m['role'] == 'user'])
     leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
 
-    # Evaluación con IA
+    # 3. EVALUACIÓN GPT
     try:
         summaries = evaluate_interaction(user_text, leo_text)
         public_summary = summaries.get("public", "")
@@ -300,45 +337,59 @@ def log_full_session():
     except Exception as e:
         public_summary = "⚠️ Evaluación no disponible."
         internal_summary = f"❌ Error: {str(e)}"
+        print(f"[ERROR] Evaluación fallida: {e}")
 
-    # Consejo personalizado
+    # 4. CONSEJO PERSONALIZADO
     try:
         tip_completion = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Eres un coach médico que ofrece consejos prácticos sobre cómo mejorar las interacciones con doctores."},
-                {"role": "user", "content": f"""Basado en esta conversación:
-
-{user_text}
-
-¿Qué podría hacer mejor el participante la próxima vez? Da 2-3 sugerencias claras y concretas."""}
+                {"role": "user", "content": f"Basado en esta conversación:\n\n{user_text}\n\n¿Qué podría hacer mejor el participante la próxima vez? Da 2-3 sugerencias claras y concretas."}
             ],
             temperature=0.5,
         )
         tip_text = tip_completion.choices[0].message.content.strip()
     except Exception as e:
         tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
+        print(f"[ERROR] Consejo fallido: {e}")
 
-    # Guardar en la base de datos
+    # 5. ANÁLISIS VISUAL
+    if video_filename:
+        try:
+            video_stats = analyze_video_posture(os.path.join(app.config['UPLOAD_FOLDER'], video_filename))
+            visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
+            posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
+            print(f"[POSTURA] {posture_feedback}")
+        except Exception as e:
+            posture_feedback = f"⚠️ Error en análisis visual: {str(e)}"
+            print(f"[ERROR] Análisis de postura falló: {e}")
+
+    # 6. GUARDAR EN BASE DE DATOS
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         INSERT INTO interactions (
             name, email, scenario, message, response, timestamp,
-            evaluation, evaluation_rh, duration_seconds, tip, audio_path
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            evaluation, evaluation_rh, duration_seconds, tip,
+            audio_path, visual_feedback
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         name, email, scenario, full_text, leo_text, timestamp,
-        public_summary, internal_summary, duration, tip_text, audio_filename
+        public_summary, internal_summary, duration, tip_text,
+        audio_filename or video_filename, posture_feedback
     ))
     conn.commit()
     conn.close()
 
-    return jsonify({"status": "ok", "evaluation": public_summary, "tip": tip_text})
+    return jsonify({
+        "status": "ok",
+        "evaluation": public_summary,
+        "tip": tip_text,
+        "visual_feedback": posture_feedback
+    })
 
 import secrets  # fuera de las funciones
-
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
@@ -413,6 +464,7 @@ def admin_panel():
         total_minutes=total_minutes,
         contracted_minutes=contracted_minutes
     )
+
 @app.route("/end_session", methods=["POST"])
 def end_session():
     name = session.get("name")

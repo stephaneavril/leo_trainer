@@ -289,6 +289,17 @@
     alert("Tu sesión ha finalizado. Serás redirigido al dashboard.");
     window.location.href = "/end_session";  // Ruta que debes implementar
   }, 300000); // 5 minutos
+
+  function registrarMensaje(role, text) {
+    messages.push({ role, text });
+    console.log(`💬 ${role}: ${text}`);
+  }
+
+  const docBtn = document.getElementById("doc-toggle");
+  const docPanel = document.getElementById("doc-panel");
+  docBtn.addEventListener("click", () => {
+    docPanel.style.right = docPanel.style.right === "0px" ? "-400px" : "0px";
+  });
 </script>
 <footer>
     <p>Desarrollado por <a href="https://www.teams.com.mx" target="_blank">Teams</a> &copy; 2025</p>
