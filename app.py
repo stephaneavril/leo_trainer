@@ -20,18 +20,19 @@ client = openai  # ✅ Esto te permite usar client.chat.completions...
 
 whisper_model = whisper.load_model("base")  # solo una vez al cargar la app
 
+AUDIO_FOLDER = "static/audio"
+os.makedirs(AUDIO_FOLDER, exist_ok=True)
+
 app = Flask(__name__)
 CORS(app)
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-DB_PATH = "logs/interactions.db"
-UPLOAD_FOLDER = "static/audios"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs("logs", exist_ok=True)
+app.config['UPLOAD_FOLDER'] = AUDIO_FOLDER
 
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+DB_PATH = "logs/interactions.db"
+os.makedirs("logs", exist_ok=True)
 
 # ----------------------
 # DB Init
@@ -244,6 +245,26 @@ def upload_video():
     conn.close()
     return jsonify({"status": "saved", "path": filename})
 
+@app.route("/upload_audio", methods=["POST"])
+def upload_audio():
+    if 'audio' not in request.files:
+        return jsonify({"error": "No se envió ningún archivo de audio."}), 400
+
+    file = request.files['audio']
+    if file.filename == '':
+        return jsonify({"error": "Nombre de archivo vacío."}), 400
+
+    if file:
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+
+        # Guardar el path del audio en sesión para uso posterior (ej. en log_full_session)
+        session["last_audio_path"] = filename
+        return jsonify({"status": "ok", "path": filename})
+
+    return jsonify({"error": "Error desconocido al subir archivo."}), 500
+
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
     data = request.get_json()
@@ -254,15 +275,10 @@ def log_full_session():
     timestamp = datetime.now().isoformat()
     duration = int(data.get("duration", 0))
 
-    # Buscar el último audio y transcribirlo
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT audio_path FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
-    row = c.fetchone()
-    conn.close()
-
-    if row and row[0]:
-        audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], row[0])
+    # Transcribir el último audio subido si existe
+    audio_filename = session.get("last_audio_path")
+    if audio_filename:
+        audio_file_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
         try:
             result = whisper_model.transcribe(audio_file_path)
             transcribed_text = result['text'].strip()
@@ -271,12 +287,12 @@ def log_full_session():
     else:
         transcribed_text = ""
 
-    # Procesar texto transcrito
+    # Armar textos para evaluación
     full_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
     user_text = transcribed_text
     leo_text = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
 
-    # Evaluación IA
+    # Evaluación con IA
     try:
         summaries = evaluate_interaction(user_text, leo_text)
         public_summary = summaries.get("public", "")
@@ -285,7 +301,7 @@ def log_full_session():
         public_summary = "⚠️ Evaluación no disponible."
         internal_summary = f"❌ Error: {str(e)}"
 
-    # Generar consejo con GPT
+    # Consejo personalizado
     try:
         tip_completion = client.chat.completions.create(
             model="gpt-4",
@@ -303,12 +319,19 @@ def log_full_session():
     except Exception as e:
         tip_text = f"⚠️ No se pudo generar consejo automático: {str(e)}"
 
-    # Guardar todo
+    # Guardar en la base de datos
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""INSERT INTO interactions (name, email, scenario, message, response, timestamp, evaluation, evaluation_rh, duration_seconds, tip)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (name, email, scenario, full_text, leo_text, timestamp, public_summary, internal_summary, duration, tip_text))
+    c.execute("""
+        INSERT INTO interactions (
+            name, email, scenario, message, response, timestamp,
+            evaluation, evaluation_rh, duration_seconds, tip, audio_path
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        name, email, scenario, full_text, leo_text, timestamp,
+        public_summary, internal_summary, duration, tip_text, audio_filename
+    ))
     conn.commit()
     conn.close()
 
@@ -390,7 +413,7 @@ def admin_panel():
         total_minutes=total_minutes,
         contracted_minutes=contracted_minutes
     )
-@app.route("/end_session")
+@app.route("/end_session", methods=["POST"])
 def end_session():
     name = session.get("name")
     email = session.get("email")
@@ -402,13 +425,23 @@ def end_session():
     duration = 300  # 5 minutos en segundos
     timestamp = datetime.now().isoformat()
 
-    # Guardar en la tabla `interactions` con duración vacía si no hay audio
+    # Procesar archivo de audio si fue enviado
+    audio_path = ""
+    if "audio" in request.files:
+        audio_file = request.files["audio"]
+        if audio_file.filename:
+            filename = secure_filename(f"{name}_{timestamp}.mp3")
+            audio_path = filename
+            save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            audio_file.save(save_path)
+
+    # Guardar en base de datos
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        INSERT INTO interactions (name, email, scenario, message, response, duration_seconds, timestamp)
-        VALUES (?, ?, ?, '', '', ?, ?)
-    """, (name, email, scenario, duration, timestamp))
+        INSERT INTO interactions (name, email, scenario, message, response, duration_seconds, timestamp, audio_path)
+        VALUES (?, ?, ?, '', '', ?, ?, ?)
+    """, (name, email, scenario, duration, timestamp, audio_path))
     conn.commit()
     conn.close()
 
