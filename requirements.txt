@@ -8,4 +8,5 @@ pandas
 matplotlib
 opencv-python
 openai-whisper @ git+https://github.com/openai/whisper.git
-moviepy
+moviepy==1.0.3
+
