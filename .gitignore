@@ -1,5 +1,45 @@
+# Compilados de Python
 __pycache__/
-*.pyc
-.env
+*.py[cod]
+*.so
+
+# Entornos virtuales
+venv/
+.env/
+.envrc
+.venv/
+
+# Logs y bases de datos locales
+*.log
+*.sqlite3
+*.db
+logs/
 logs/*.db
-static/audios/*
+
+# Archivos de configuración
+*.env
+*.ini
+*.bak
+
+# Archivos temporales de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos y carpetas generados por Flask/usuario
+instance/
+uploads/
+static/audio/
+static/audios/
+static/audio/*
+static/uploads/
+static/uploads/*
+*.webm
+*.mp4
+*.wav
+
+# VS Code
+.vscode/
+
+# Node/JS si se usa algún agente D-ID embebido
+node_modules/
+dist/

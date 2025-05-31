@@ -13,6 +13,14 @@ import matplotlib.pyplot as plt
 from evaluator import evaluate_interaction
 from moviepy.editor import VideoFileClip  # <= Requerido para análisis de video
 
+def convert_webm_to_mp4(input_path, output_path):
+    import subprocess
+    command = [
+        "ffmpeg", "-i", input_path,
+        "-c:v", "libx264", "-c:a", "aac",
+        "-strict", "experimental", output_path
+    ]
+    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 print("\U0001F680 Iniciando Leo Virtual Trainer...")
 
@@ -287,7 +295,9 @@ def log_full_session():
 
     transcribed_text = ""
     audio_filename = session.get("last_audio_path")
-    video_filename = data.get("video_filename") or session.get("last_video_path")
+    video_filename = data.get("video_filename")
+    if not video_filename:
+        return jsonify({"status": "error", "error": "No se recibió video_filename."}), 400
     posture_feedback = ""
 
     # TRANSCRIPCIÓN
@@ -300,11 +310,27 @@ def log_full_session():
                 print(f"[INFO] Transcripción de audio: {transcribed_text[:100]}...")
             except Exception as e:
                 print(f"[ERROR] Fallo transcripción de audio: {e}")
+    
     elif video_filename:
         video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
         temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], "temp_audio.wav")
         try:
-            video = VideoFileClip(video_path)
+            # Convertimos el .webm a .mp4 para evitar errores con MoviePy
+            safe_video_path = os.path.join(app.config['UPLOAD_FOLDER'], "temp_safe.mp4")
+            convert_webm_to_mp4(video_path, safe_video_path)
+
+            video = VideoFileClip(safe_video_path)
+            if video.audio is None:
+                print("⚠️ El video no tiene pista de audio.")
+                raise ValueError("Video sin audio")
+
+            video.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+            result = whisper_model.transcribe(temp_audio_path)
+            transcribed_text = result.get("text", "").strip()
+            print(f"[INFO] Transcripción desde video: {transcribed_text[:100]}...")
+        except Exception as e:
+            print(f"[ERROR] Transcripción desde video fallida: {e}")
+
             if video.audio is None:
                 print("⚠️ El video no tiene pista de audio.")
                 raise ValueError("Video sin audio")
