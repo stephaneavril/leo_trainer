@@ -5,6 +5,7 @@ import re
 import textwrap
 import cv2
 import numpy as np
+import json # Import json for structured output
 from openai import OpenAI
 from openai import OpenAIError
 from dotenv import load_dotenv
@@ -37,95 +38,175 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             frontal_frames = 0
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
+            # Analyze a subset of frames for efficiency (e.g., first 100 frames)
             for _ in range(min(100, frame_count)):
                 ret, frame = cap.read()
                 if not ret:
                     break
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+                faces = face_cascade.detectMultiScale(gray, 1.3, 5) # Default parameters often work well
                 if len(faces) > 0:
                     frontal_frames += 1
-            cap.release()
-            ratio = frontal_frames / min(100, frame_count)
-            if ratio >= 0.7:
-                return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta"
+            cap.release() # Release the video capture object
+            
+            if frame_count > 0:
+                ratio = frontal_frames / min(100, frame_count)
             else:
-                return "⚠️ Asegúrate de mantenerte visible durante toda la sesión.", "Mejorar visibilidad"
+                ratio = 0 # No frames to analyze
+
+            if ratio >= 0.7:
+                return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta", f"{ratio*100:.1f}%"
+            elif ratio > 0:
+                return "⚠️ Asegúrate de mantenerte visible durante toda la sesión.", "Mejorar visibilidad", f"{ratio*100:.1f}%"
+            else:
+                return "❌ No se detectó rostro en el video.", "No detectado", "0.0%"
         except Exception as e:
-            return f"⚠️ Error en análisis visual: {str(e)}", "No evaluado"
+            return f"⚠️ Error en análisis visual: {str(e)}", "Error", "N/A"
 
     score = basic_keywords_eval(user_text)
     closure_ok = detect_closure_language(user_text)
-    visual_feedback, visual_eval = detect_visual_cues_from_video(video_path) if video_path else ("⚠️ Sin video disponible.", "No evaluado")
+    visual_feedback_public, visual_eval_internal, visual_pct = detect_visual_cues_from_video(video_path) if video_path and os.path.exists(video_path) else ("⚠️ Sin video disponible.", "No evaluado", "N/A")
 
     sales_model_score = {
-        "diagnostico": any(kw in user_text.lower() for kw in ["cómo", "qué", "cuándo", "desde cuándo", "por qué"]),
-        "argumentacion": any(kw in user_text.lower() for kw in ["beneficio", "eficaz", "estudio", "seguridad", "mecanismo"]),
-        "validacion": any(kw in user_text.lower() for kw in ["entiendo", "veo que", "comprendo", "es lógico"]),
-        "cierre": closure_ok
+        "diagnostico": any(kw in user_text.lower() for kw in ["cómo", "qué", "cuándo", "desde cuándo", "por qué", "necesita", "perfil"]),
+        "argumentacion": any(kw in user_text.lower() for kw in ["beneficio", "eficaz", "estudio", "seguridad", "mecanismo", "solución", "paciente", "evidencia"]),
+        "validacion": any(kw in user_text.lower() for kw in ["entiendo", "veo que", "comprendo", "es lógico", "correcto", "confirmo", "entonces"]),
+        "cierre": closure_ok # This remains a simple boolean for now
     }
-    model_applied_steps = sum(sales_model_score.values())
+    model_applied_steps_count = sum(sales_model_score.values())
 
-    active_listening_score = sum(1 for phrase in ["entiendo", "comprendo", "veo que", "lo que dices", "tiene sentido"] if phrase in user_text.lower())
+    active_listening_keywords = ["entiendo", "comprendo", "veo que", "lo que dices", "tiene sentido", "si entiendo bien", "parafraseando"]
+    active_listening_score = sum(1 for phrase in active_listening_keywords if phrase in user_text.lower())
+
 
     # GPT feedback
     feedback_level = "alto"
-    if score <= 2 and not closure_ok:
-        gpt_feedback = (
-            "⚠️ Tu desempeño mostró importantes áreas de mejora. No se observaron elementos clave del modelo de ventas ni argumentos clínicos sólidos. "
-            "Revisa tus argumentos científicos y practica cómo responder con evidencia médica."
+    gpt_public_summary = ""
+    gpt_internal_structured_feedback = {}
+
+    try:
+        # Request a JSON output from GPT
+        completion = client.chat.completions.create(
+            model="gpt-4o", # Using gpt-4o for its ability to generate structured output more reliably
+            response_format={ "type": "json_object" }, # Explicitly request JSON
+            messages=[
+                {"role": "system", "content": textwrap.dedent("""
+                    Eres un coach experto en entrenamiento de ventas farmacéuticas para representantes médicos.
+                    Tu objetivo es evaluar el desempeño del "Participante" en una simulación de visita médica,
+                    aplicando el 'Modelo de Ventas Da Vinci' y los principios de 'Insights Discovery' (comunicación adaptativa).
+                    Proporciona retroalimentación constructiva, específica y accionable.
+
+                    **Modelo de Ventas Da Vinci - Fases Clave:**
+                    1.  **Preparación de la Visita (Paso 1)**: Evalúa si el participante demuestra haber analizado la información y fijado objetivos (evidenciado en su discurso inicial o preguntas).
+                    2.  **Apertura (Paso 2)**: ¿El participante capturó la atención del médico y despertó su interés? ¿Creó un vínculo? (Ej: saludo profesional, mención de visita anterior, enfoque en el paciente/síntomas relevantes).
+                    3.  **Persuasión (Paso 3)**: ¿Descubrió necesidades del paciente y transmitió mensajes clave para persuadir al médico? ¿Utilizó preguntas poderosas? ¿Presentó beneficios que conectan con las necesidades del médico/paciente? ¿Manejó objeciones?
+                    4.  **Cierre (Paso 4)**: ¿Realizó acuerdos de prescripción? ¿Identificó señales de compra y solicitó el uso del producto?
+                    5.  **Puente (Paso 5 - para segundo producto, si aplica)**: Si la conversación da pie a un segundo producto, ¿el participante realizó una transición efectiva usando "ganchos"?
+                    6.  **Análisis Posterior (Paso 8)**: Aunque no se evalúa directamente en la conversación, infiere si el participante demostró capacidad para auto-evaluar la visita.
+
+                    **Habilidades/Competencias Clave (transversales al modelo):**
+                    -   **Diagnóstico Profundo (D)**: Capacidad de indagar en las necesidades del médico y perfil del paciente.
+                    -   **Arte de Conectar (A)**: Empatía, escucha activa, creación de conversaciones significativas.
+                    -   **Valor con Propósito (V)**: Presentar soluciones relevantes, centradas en el bienestar del paciente y con evidencia.
+                    -   **Innovación Adaptativa (I)**: Personalización del approach, uso creativo de herramientas (aunque no observables aquí).
+                    -   **Nutrir el Conocimiento (N)**: Demostrar conocimiento profundo del producto y patología.
+                    -   **Curiosidad Activa (C)**: Preguntar, investigar, cuestionar para ir más allá de lo evidente.
+                    -   **Impacto Positivo (I)**: Dejar una huella memorable y un beneficio real.
+
+                    **Insights Discovery - Adaptación al estilo del Médico (Leo):**
+                    -   Analiza si el participante adaptó su comunicación. Si es posible, inferencia el tipo de personalidad del médico (Rojo Fuego, Azul Mar, Amarillo Sol, Verde Tierra) basado en sus respuestas y evalúa la adaptación.
+
+                    **Manejo de Objeciones (MILD/APACT):**
+                    -   Si el médico presentó una objeción, ¿el participante la manejó siguiendo los pasos de APACT (Admitir, Preguntar, Argumentar, Confirmar, Transición) y si identificó el tipo de objeción (Malentendido, Indiferencia, Limitación, Duda - MILD)?
+
+                    **Output Format:**
+                    Your response MUST be a JSON object with two main keys: "public_summary" (string) and "internal_analysis" (object).
+
+                    The "public_summary" should be a concise, motivating overall feedback for the participant.
+                    The "internal_analysis" object should contain detailed, structured feedback for HR, with keys like:
+                    - "overall_evaluation": string (brief summary for HR)
+                    - "da_vinci_model_feedback": object with keys for each phase (e.g., "apertura": {"score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico"})
+                    - "insights_discovery_adaptation": {"inferred_leo_type": "string", "adaptation_score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico sobre la adaptación"}
+                    - "objection_handling_feedback": {"objection_detected": "bool", "type": "string", "apact_applied": "string (Total/Parcial/No Aplicado)", "feedback": "Detalle específico"}
+                    - "active_listening_feedback": {"score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico"}
+                    - "strengths": array of strings
+                    - "areas_for_improvement_specific": array of strings (actionable advice for HR)
+                    """)}, 
+                {"role": "user", "content": f"""
+                    --- Inicio de Simulación ---
+                    Participante (Tú): {user_text}
+                    Médico (Leo): {leo_text}
+                    --- Fin de Simulación ---
+
+                    Por favor, proporciona una evaluación detallada del Participante en formato JSON, siguiendo las instrucciones de tu rol como coach experto en ventas farmacéuticas.
+                    """}
+            ],
+            temperature=0.4,
         )
-        feedback_level = "crítico"
-    else:
+        
+        gpt_response_content = completion.choices[0].message.content.strip()
+        
+        # Parse the JSON response
         try:
-            completion = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "Eres un coach experto en entrenamientos clínicos. Sé claro, motivador y profesional."},
-                    {"role": "user", "content": f"""Actúa como evaluador de una simulación médica.
-Participante: {user_text}
-Médico (Leo): {leo_text}
-Evalúa al participante de forma motivadora y constructiva."""}
-                ],
-                temperature=0.4,
-            )
-            gpt_feedback = completion.choices[0].message.content.strip()
-        except OpenAIError as e:
-            gpt_feedback = f"⚠️ Evaluación GPT-4 no disponible: {str(e)}"
-            feedback_level = "error"
+            parsed_gpt_response = json.loads(gpt_response_content)
+            gpt_public_summary = parsed_gpt_response.get("public_summary", "No se generó resumen público.")
+            gpt_internal_structured_feedback = parsed_gpt_response.get("internal_analysis", {})
+        except json.JSONDecodeError:
+            print(f"[ERROR] GPT response was not valid JSON: {gpt_response_content}")
+            gpt_public_summary = "⚠️ Evaluación automática (GPT) no disponible: Formato inválido."
+            gpt_internal_structured_feedback = {"error": "Formato JSON inválido de GPT.", "raw_response": gpt_response_content[:200]}
 
-    public_summary = textwrap.dedent(f"""
-        {gpt_feedback}
 
-        {visual_feedback}
+    except OpenAIError as e:
+        gpt_public_summary = f"⚠️ Evaluación automática (GPT) no disponible en este momento debido a un error: {str(e)}"
+        gpt_internal_structured_feedback = {"error": f"Error de OpenAI: {str(e)}"}
+        feedback_level = "error"
+    except Exception as e:
+        gpt_public_summary = f"⚠️ Evaluación automática (GPT) no disponible debido a un error inesperado: {str(e)}"
+        gpt_internal_structured_feedback = {"error": f"Error inesperado al llamar a GPT: {str(e)}"}
+        feedback_level = "error"
 
-        Áreas sugeridas:
-        - Asegúrate de responder con evidencia médica.
-        - Refuerza el uso del modelo de ventas (sin mencionarlo explícitamente).
-        - Recuerda manejar bien cada objeción médica.
-        - Mantén contacto visual con la cámara y buena presencia.
-    """)
 
-    internal_summary = textwrap.dedent(f"""
-        📋 Evaluación técnica (RH):
+# Construct final internal summary (string representation of the structured JSON)
+    # This will be stored in the DB and passed to admin.html
+    # It's crucial that this is a JSON string for easy parsing in admin.html
+    final_internal_summary_dict = {
+        "overall_rh_summary": gpt_internal_structured_feedback.get("overall_evaluation", "Evaluación general no disponible del GPT."),
+        "knowledge_score": f"{score}/8",
+        "visual_presence": visual_eval_internal,
+        "visual_percentage": visual_pct,
+        "sales_model_simple_detection": {
+            "diagnostico": '✅' if sales_model_score['diagnostico'] else '❌',
+            "argumentacion": '✅' if sales_model_score['argumentacion'] else '❌',
+            "validacion": '✅' if sales_model_score['validacion'] else '❌',
+            "cierre": '✅' if sales_model_score['cierre'] else '❌',
+            "steps_applied_count": f"{model_applied_steps_count}/4"
+        },
+        # Corrected line: This is now a proper key-value pair
+        "active_listening_simple_detection": 'Alta' if active_listening_score >= 4 else 'Moderada' if active_listening_score >= 2 else 'Baja',
 
-        🧠 Conocimientos técnicos
-        - Palabras clave científicas: {score}/8
+        "gpt_detailed_feedback": gpt_internal_structured_feedback, # Embed the full GPT object here
+        "error_during_eval": gpt_internal_structured_feedback.get("error", "No error detected from GPT.")
+    }
+    
+    # Convert the dictionary to a JSON string for storage in the database
+    final_internal_summary_json = json.dumps(final_internal_summary_dict, ensure_ascii=False, indent=2)
 
-        🎯 Aplicación del modelo de ventas
-        - Diagnóstico: {'✅' if sales_model_score['diagnostico'] else '❌'}
-        - Argumentación: {'✅' if sales_model_score['argumentacion'] else '❌'}
-        - Validación: {'✅' if sales_model_score['validacion'] else '❌'}
-        - Cierre: {'✅' if sales_model_score['cierre'] else '❌'}
-        ({model_applied_steps}/4 pasos aplicados)
 
-        🎧 Escucha activa: {'Alta' if active_listening_score >= 4 else 'Moderada' if active_listening_score >= 2 else 'Baja'} ({active_listening_score}/5)
+    public_summary_for_user = textwrap.dedent(f"""
+        {gpt_public_summary}
 
-        📹 Presencia en video: {visual_eval}
+        {visual_feedback_public}
+
+        Áreas sugeridas adicionales:
+        - Asegúrate de responder con evidencia médica sólida y adaptada a la necesidad del médico.
+        - Refuerza el uso estructurado del modelo de ventas Da Vinci en cada interacción.
+        - Practica el manejo de objeciones aplicando la metodología APACT.
+        - Mantén un contacto visual adecuado con la cámara y una buena presencia general durante la sesión.
     """)
 
     return {
-        "public": public_summary.strip(),
-        "internal": internal_summary.strip(),
+        "public": public_summary_for_user.strip(),
+        "internal": final_internal_summary_json, # Store JSON string here
         "level": feedback_level
     }

@@ -102,28 +102,28 @@
       z-index: 9997;
       border-left: 2px solid #00bfff;
     }
-.loader {
-  border: 6px solid #f3f3f3;
-  border-top: 6px solid #00e0ff;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 10px auto;
-}
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
 
+    .loader {
+      border: 6px solid #f3f3f3;
+      border-top: 6px solid #00e0ff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px auto;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
   <div id="recording-indicator" title="Grabando..."></div>
-
   <h1>🧠 Leo - {{ scenario }}</h1>
   <p id="status">Solicitando permisos para cámara y micrófono...</p>
-  <div id="ai-agent" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+  <div id="ai-agent"></div>
 
   <button id="doc-toggle">📘 Ver Documentación</button>
   <div id="doc-panel">
@@ -146,10 +146,9 @@
     <h2>✅ Resumen de desempeño</h2>
     <p id="evaluation-text"></p>
     <div id="extra-tip" style="display:none; margin-top: 30px; background: #f5faff; padding: 20px; border-left: 4px solid #00bfff; border-radius: 8px; color: #222;">
-  <h3>🧠 Consejo personalizado de Leo:</h3>
-  <p id="tip-text">Cargando sugerencia...</p>
-</div>
-
+      <h3>🧠 Consejo personalizado de Leo:</h3>
+      <p id="tip-text">Cargando sugerencia...</p>
+    </div>
     <form id="dashboardForm" action="/dashboard" method="POST">
       <input type="hidden" name="name" value="{{ name }}">
       <input type="hidden" name="email" value="{{ email }}">
@@ -157,8 +156,23 @@
     </form>
   </div>
 
+    <div id="ia-progress" style="display:none; margin-top:20px; width:100%; max-width:400px; margin: auto;">
+    <div style="background:#333; height:20px; border-radius:10px; overflow:hidden;">
+      <div id="ia-bar" style="width:0%; height:100%; background:#00e0ff;"></div>
+    </div>
+    <p id="ia-progress-text" style="color:#ccc; font-size:0.8em; margin-top:5px;">Procesando...</p>
+  </div>
+
   <script>
-    let messages = []; // Captura del diálogo real
+    let messages = []; // Global array to capture the actual dialogue
+
+    // Function to register messages (needs to be called by D-ID agent events)
+    function registrarMensaje(role, text) {
+      messages.push({ role, text });
+      console.log(`💬 ${role}: ${text}`);
+    }
+
+    // Doc Panel Toggle
     const docBtn = document.getElementById("doc-toggle");
     const docPanel = document.getElementById("doc-panel");
     docBtn.addEventListener("click", () => {
@@ -167,207 +181,267 @@
   </script>
 
   <script type="module">
+    // D-ID Agent setup
     const agent = document.createElement("script");
     agent.type = "module";
     agent.src = "https://agent.d-id.com/v1/index.js";
     agent.setAttribute("data-name", "did-agent");
     agent.setAttribute("data-mode", "fabio");
+    // !! IMPORTANT: Replace with your actual D-ID Client Key and Agent ID
     agent.setAttribute("data-client-key", "Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN");
     agent.setAttribute("data-agent-id", "agt_8nBIc-s-");
-    agent.setAttribute("data-monitor", "true");
+    agent.setAttribute("data-monitor", "true"); // Keep this true for monitoring D-ID events
     document.getElementById("ai-agent").appendChild(agent);
+
+    // !! IMPORTANT: INTEGRATE D-ID EVENTS TO POPULATE 'messages' ARRAY
+    // The D-ID agent likely emits events when it speaks or hears user input.
+    // You need to listen for these events and call `registrarMensaje`.
+    // Example (refer to D-ID SDK documentation for exact event names and data structure):
+    /*
+    document.addEventListener('did-agent-event-name-for-agent-speak', (event) => {
+      registrarMensaje('agent', event.detail.text);
+    });
+    document.addEventListener('did-agent-event-name-for-user-input', (event) => {
+      registrarMensaje('user', event.detail.text);
+    });
+    */
   </script>
-<script>
-  document.addEventListener("DOMContentLoaded", async () => {
-    const name = "{{ name }}";
-    const email = "{{ email }}";
-    const scenario = "{{ scenario }}";
-    const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
-    const remainingTime = Math.max(600 - usedSeconds, 0);
 
-    const endBtn = document.getElementById("end-btn");
-    const summaryBox = document.getElementById("summary-box");
-    const evalText = document.getElementById("evaluation-text");
-    const status = document.getElementById("status");
-    const timerEl = document.getElementById("timer");
-    const dashBtn = document.getElementById("to-dashboard");
+  <script>
+    document.addEventListener("DOMContentLoaded", async () => {
+      const name = "{{ name }}";
+      const email = "{{ email }}";
+      const scenario = "{{ scenario }}";
+      const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
+      const remainingTime = Math.max(600 - usedSeconds, 0); // 10 minutes total
 
-    let recorder, chunks = [], stream;
-    let sessionEnded = false;
-    let countdown = remainingTime;
-    let interval;
+      const endBtn = document.getElementById("end-btn");
+      const summaryBox = document.getElementById("summary-box");
+      const evalText = document.getElementById("evaluation-text");
+      const status = document.getElementById("status");
+      const timerEl = document.getElementById("timer");
+      const dashBtn = document.getElementById("to-dashboard");
 
-    const updateTimer = (duration) => {
-      const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
-      const seconds = (duration % 60).toString().padStart(2, '0');
-      timerEl.textContent = `Duración: ${minutes}:${seconds}`;
-    };
+      let recorder, chunks = [], stream;
+      let sessionEnded = false;
+      let countdown = remainingTime;
+      let interval;
 
-    const endSession = async () => {
-  if (sessionEnded) return;
-  sessionEnded = true;
-  clearInterval(interval);
+      const updateTimer = (duration) => {
+        const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
+        const seconds = (duration % 60).toString().padStart(2, '0');
+        timerEl.textContent = `Duración: ${minutes}:${seconds}`;
+      };
 
-  const duration = 600 - countdown;
-  document.getElementById("recording-indicator")?.remove();
-  endBtn.disabled = true;
-  endBtn.textContent = "Guardando...";
-  stream.getTracks().forEach(track => track.stop());
-  document.getElementById("preview-video")?.remove();
-  recorder.stop();
+      const endSession = async () => {
+        if (sessionEnded) return; // Prevent multiple calls
+        sessionEnded = true;
+        clearInterval(interval); // Stop the countdown timer
 
-// ⏳ Mostrar mensaje de espera mientras trabaja la IA
-const processingDiv = document.createElement("div");
-processingDiv.innerHTML = `
-  <div style="text-align:center; margin-top: 20px;" id="ia-waiting">
-    <div class="loader"></div>
-    <h2 style="color: #00ffcc; margin-bottom: 10px;">⏳ Analizando tu desempeño...</h2>
-    <p style="color: white; font-size: 1.2em;">
-      Evaluando con inteligencia artificial, por favor espera.
-    </p>
-    <p style="color: #ccc; font-size: 0.9em;">
-      Analizando video, audio y conversación para generar retroalimentación completa.
-    </p>
-  </div>
-`;
-document.body.appendChild(processingDiv);
+        const duration = 600 - countdown; // Calculate actual session duration
+        document.getElementById("recording-indicator")?.remove();
+        endBtn.disabled = true;
+        endBtn.textContent = "Guardando...";
 
-await new Promise(resolve => {
-  recorder.onstop = resolve;
-  recorder.stop();
-});
+        // Stop all media tracks (camera and microphone)
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById("preview-video")?.remove();
 
-  // ✅ 1. SUBE PRIMERO EL VIDEO
-  let videoData = null;
-  if (chunks.length > 0) {
-    const blob = new Blob(chunks, { type: 'video/webm' });
-    const formData = new FormData();
-    formData.append('video', blob);
-    formData.append('name', name);
-    formData.append('email', email);
+        // Ensure recorder is stopped and its onstop event is handled before proceeding
+        if (recorder && recorder.state !== 'inactive') {
+          await new Promise(resolve => {
+            recorder.onstop = () => {
+              console.log("MediaRecorder stopped. Chunks ready.");
+              resolve();
+            };
+            recorder.stop();
+          });
+        } else {
+          console.warn("MediaRecorder was not active or not initialized.");
+        }
 
-    const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
-    videoData = await videoRes.json();
+        // Show processing indicator and progress bar
+        const processingDiv = document.createElement("div");
+        processingDiv.innerHTML = `
+          <div style="text-align:center; margin-top: 20px;" id="ia-waiting">
+            <div class="loader"></div>
+            <h2 style="color: #00ffcc; margin-bottom: 10px;">⏳ Analizando tu desempeño...</h2>
+            <p style="color: white; font-size: 1.2em;">
+              Evaluando con inteligencia artificial, por favor espera.
+            </p>
+            <p style="color: #ccc; font-size: 0.9em;">
+              Analizando video, audio y conversación para generar retroalimentación completa.
+            </p>
+          </div>
+        `;
+        document.body.appendChild(processingDiv);
 
-    if (!videoData.status || videoData.status !== 'saved') {
-      alert("⚠️ Problema al subir el video.");
-    }
-  }
-<div id="ia-progress" style="display:none; margin-top:20px; width:100%; max-width:400px; margin: auto;">
-  <div style="background:#333; height:20px; border-radius:10px; overflow:hidden;">
-    <div id="ia-bar" style="width:0%; height:100%; background:#00e0ff;"></div>
-  </div>
-  <p id="ia-progress-text" style="color:#ccc; font-size:0.8em; margin-top:5px;">Procesando...</p>
-</div>
+        const iaProgressDiv = document.getElementById("ia-progress");
+        const iaBar = document.getElementById("ia-bar");
+        const iaText = document.getElementById("ia-progress-text");
+        iaProgressDiv.style.display = "block"; // Make the progress bar visible
 
-  // ✅ 2. LUEGO ENVÍA EL REGISTRO DE LA SESIÓN
-const sessionRes = await fetch('/log_full_session', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    name,
-    email,
-    scenario,
-    conversation: messages,
-    duration,
-    video_filename: videoData?.path || null  // <== importante
-  })
-});
+        // Simulate progress for UI feedback while waiting for backend
+        let currentProgress = 0;
+        const updateSimulatedProgress = (stepName, targetPercentage) => {
+          const stepIncrement = (targetPercentage - currentProgress) / 20; // 20 small steps to reach target
+          const intervalDuration = 100; // milliseconds
+          const simInterval = setInterval(() => {
+            currentProgress += stepIncrement;
+            if (currentProgress >= targetPercentage) {
+              currentProgress = targetPercentage;
+              clearInterval(simInterval);
+            }
+            iaBar.style.width = `${Math.round(currentProgress)}%`;
+            iaText.textContent = `${stepName} ${Math.round(currentProgress)}%`;
+          }, intervalDuration);
+          return new Promise(resolve => {
+              setTimeout(() => {
+                  clearInterval(simInterval); // Ensure interval stops even if progress hits early
+                  iaBar.style.width = `${targetPercentage}%`;
+                  iaText.textContent = `${stepName} ${targetPercentage}%`;
+                  resolve();
+              }, 20 * intervalDuration + 50); // Give it a little extra time
+          });
+        };
 
 
-  const sessionData = await sessionRes.json();
+        // --- Backend Calls ---
+        let videoData = null;
+        if (chunks.length > 0) {
+          await updateSimulatedProgress("Subiendo video...", 30);
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const formData = new FormData();
+          formData.append('video', blob);
+          formData.append('name', name);
+          formData.append('email', email);
 
-  if (!sessionData.status || sessionData.status !== 'ok') {
-    alert("⚠️ Error al guardar la sesión.");
-    return;
-  }
+          try {
+            const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
+            videoData = await videoRes.json();
+            if (!videoData.status || videoData.status !== 'saved') {
+              console.error("Backend did not confirm video saved:", videoData);
+              alert("⚠️ Problema al subir el video. Consulta la consola para más detalles.");
+            } else {
+              console.log("Video uploaded successfully:", videoData.path);
+            }
+          } catch (error) {
+            console.error("Error uploading video:", error);
+            alert("⚠️ Error de red al subir el video. Verifica tu conexión.");
+          }
+        } else {
+          console.warn("No video chunks captured for upload.");
+          // Still simulate progress to keep the flow consistent
+          await updateSimulatedProgress("Saltando subida de video...", 30);
+        }
 
-  evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
-  if (sessionData.tip) {
-    document.getElementById("tip-text").textContent = sessionData.tip;
-    document.getElementById("extra-tip").style.display = "block";
-  }
+        await updateSimulatedProgress("Enviando registro de sesión...", 60);
+        let sessionData = null;
+        try {
+          const sessionRes = await fetch('/log_full_session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name,
+              email,
+              scenario,
+              conversation: messages,
+              duration,
+              video_filename: videoData?.path || null
+            })
+          });
+          sessionData = await sessionRes.json();
+          if (!sessionData.status || sessionData.status !== 'ok') {
+            console.error("Backend did not confirm session saved:", sessionData);
+            alert("⚠️ Error al guardar la sesión. Consulta la consola para más detalles.");
+          } else {
+            console.log("Session logged successfully. AI evaluation result:", sessionData);
+          }
+        } catch (error) {
+          console.error("Error logging session:", error);
+          alert("⚠️ Error de red al guardar la sesión. Verifica tu conexión.");
+        }
 
-  summaryBox.style.display = 'block';
-  endBtn.style.display = "none";
-  timerEl.style.display = "none";
+        // Assuming AI evaluation is part of the /log_full_session response.
+        // If your AI takes longer, you'd implement polling here (e.g., fetch a '/get_evaluation_status' endpoint).
+        await updateSimulatedProgress("Generando evaluación...", 100); // Finish progress bar
 
-  setTimeout(() => {
-    document.getElementById("dashboardForm").submit();
-  }, 3000);
-};
+        // Remove processing message and hide progress bar
+        document.getElementById("ia-waiting")?.remove();
+        iaProgressDiv.style.display = "none";
 
-try {
-  stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-} catch (err) {
-  console.error("❌ Error con cámara/micrófono:", err);
-  status.innerHTML = `❌ Error al acceder a cámara o micrófono:<br><code>${err.message}</code>`;
-  status.style.color = "red";
-  return;
-}
+        // Display summary based on actual sessionData
+        if (sessionData) {
+          evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
+          if (sessionData.tip) {
+            document.getElementById("tip-text").textContent = sessionData.tip;
+            document.getElementById("extra-tip").style.display = "block";
+          } else {
+            document.getElementById("extra-tip").style.display = "none";
+          }
+        } else {
+          evalText.textContent = "Hubo un error al obtener la evaluación. Por favor, inténtalo de nuevo.";
+          document.getElementById("extra-tip").style.display = "none";
+        }
 
-    const preview = document.createElement("video");
-    preview.srcObject = stream;
-    preview.autoplay = true;
-    preview.muted = true;
-    preview.style.width = "200px";
-    preview.style.position = "fixed";
-    preview.style.bottom = "20px";
-    preview.style.left = "20px";
-    preview.id = "preview-video";
-    document.body.appendChild(preview);
+        summaryBox.style.display = 'block';
+        endBtn.style.display = "none";
+        timerEl.style.display = "none";
+        dashBtn.style.display = "block"; // Show the dashboard button
 
-    status.textContent = "Permiso concedido. Grabando sesión...";
+        // Redirect to dashboard after a brief delay
+        setTimeout(() => {
+          document.getElementById("dashboardForm").submit();
+        }, 3000);
+      };
 
-    recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-    recorder.start();
+      // Initial camera and microphone permission request
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        const preview = document.createElement("video");
+        preview.srcObject = stream;
+        preview.autoplay = true;
+        preview.muted = true;
+        preview.style.width = "200px";
+        preview.style.position = "fixed";
+        preview.style.bottom = "20px";
+        preview.style.left = "20px";
+        preview.id = "preview-video";
+        document.body.appendChild(preview);
 
-    endBtn.addEventListener("click", endSession);
-const iaBar = document.getElementById("ia-bar");
-const iaProgress = document.getElementById("ia-progress");
-const iaText = document.getElementById("ia-progress-text");
-iaProgress.style.display = "block";
+        status.textContent = "Permiso concedido. Grabando sesión...";
 
-let progress = 0;
-const progressInterval = setInterval(() => {
-  progress += Math.random() * 5;
-  if (progress > 100) progress = 100;
-  iaBar.style.width = `${progress}%`;
-  iaText.textContent = `Procesando... ${Math.round(progress)}%`;
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recorder.start();
+        console.log("MediaRecorder started.");
 
-  if (progress >= 100) clearInterval(progressInterval);
-}, 500);
-
-    interval = setInterval(() => {
-      countdown--;
-      updateTimer(countdown);
-      if (countdown <= 0) {
-        clearInterval(interval);
-        endSession();
+      } catch (err) {
+        console.error("❌ Error con cámara/micrófono:", err);
+        status.innerHTML = `❌ Error al acceder a cámara o micrófono:<br><code>${err.message}</code>`;
+        status.style.color = "red";
+        endBtn.disabled = true; // Disable end button if no media
+        return;
       }
-    }, 1000);
-  });
-</script>
-<script>
-  // Redirige automáticamente después de 5 minutos (300000 milisegundos)
-  setTimeout(() => {
-    alert("Tu sesión ha finalizado. Serás redirigido al dashboard.");
-    window.location.href = "/end_session";  // Ruta que debes implementar
-  }, 300000); // 5 minutos
 
-  function registrarMensaje(role, text) {
-    messages.push({ role, text });
-    console.log(`💬 ${role}: ${text}`);
-  }
+      endBtn.addEventListener("click", endSession);
 
-  const docBtn = document.getElementById("doc-toggle");
-  const docPanel = document.getElementById("doc-panel");
-  docBtn.addEventListener("click", () => {
-    docPanel.style.right = docPanel.style.right === "0px" ? "-400px" : "0px";
-  });
-</script>
-<footer>
+      // Start the countdown timer
+      updateTimer(countdown); // Initial display
+      interval = setInterval(() => {
+        countdown--;
+        updateTimer(countdown);
+        if (countdown <= 0) {
+          clearInterval(interval);
+          endSession(); // End session automatically when timer runs out
+        }
+      }, 1000);
+    });
+  </script>
+
+  <footer>
     <p>Desarrollado por <a href="https://www.teams.com.mx" target="_blank">Teams</a> &copy; 2025</p>
   </footer>
 </body>

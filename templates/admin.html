@@ -4,158 +4,398 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Panel de RH - Evaluación de Sesiones</title>
-  <header>
-  <img src="{{ url_for('static', filename='logo-alfasigma.png') }}" alt="Alfasigma" style="height: 40px; vertical-align: middle;">
   
-</header>
-
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+  
   <style>
+    /* Colores base: Alfasigma azul oscuro, azul cielo, rojo para alertas, blanco/gris claro */
+    :root {
+      --primary-dark: #0c0e2c; /* Alfasigma dark blue */
+      --primary-light: #00bfff; /* Sky blue */
+      --secondary-red: #cc0000; /* Alert red */
+      --text-dark: #333;
+      --text-light: #f4f6fa;
+      --bg-light: #f4f6fa;
+      --bg-white: #ffffff;
+      --border-color: #e0e0e0;
+      --shadow-light: rgba(0,0,0,0.05);
+    }
+
     body {
       margin: 0;
-      font-family: 'Segoe UI', sans-serif;
-      background-color: #f4f6fa;
-      color: #333;
+      font-family: 'Open Sans', sans-serif;
+      background-color: var(--bg-light);
+      color: var(--text-dark);
+      line-height: 1.6;
     }
 
     header {
-      background: #0c0e2c;
-      color: white;
+      background: var(--primary-dark);
+      color: var(--text-light);
       padding: 20px 40px;
-      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between; /* To place logo and title */
+      box-shadow: 0 2px 8px var(--shadow-light);
+    }
+
+    header img {
+        height: 45px; /* Slightly larger logo */
+        vertical-align: middle;
+        margin-right: 15px; /* Space between logo and title */
     }
 
     header h1 {
       margin: 0;
-      font-size: 24px;
+      font-size: 26px; /* Slightly larger title */
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      flex-grow: 1; /* Allows title to take available space */
     }
 
     .container {
       padding: 30px 40px;
+      max-width: 1200px; /* Limit content width for better readability */
+      margin: 0 auto; /* Center the container */
+    }
+
+    .section-title {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      font-size: 24px;
+      color: var(--primary-dark);
+      margin-top: 40px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--primary-light);
+      padding-bottom: 10px;
     }
 
     .session-entry {
-      background: white;
-      padding: 20px;
-      margin-bottom: 20px;
-      border-radius: 10px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      background: var(--bg-white);
+      padding: 25px; /* Increased padding */
+      margin-bottom: 25px; /* Increased margin */
+      border-radius: 12px; /* More rounded corners */
+      box-shadow: 0 6px 20px var(--shadow-light); /* More prominent shadow */
+      border: 1px solid var(--border-color);
     }
 
     .session-entry h3 {
       margin-top: 0;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      font-size: 20px;
+      color: var(--primary-dark);
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+
+    .session-info strong {
+        color: #555; /* Slightly darker for labels */
     }
 
     .chat-log {
-      background: #eef3f8;
-      border-left: 4px solid #00bfff;
-      padding: 10px;
-      margin-top: 10px;
-      font-size: 14px;
+      background: #eef7fc; /* Lighter blue background */
+      border-left: 5px solid var(--primary-light); /* Thicker, more prominent border */
+      padding: 15px; /* More padding */
+      margin-top: 20px; /* More margin */
+      font-size: 15px;
+      border-radius: 8px; /* Rounded corners */
+    }
+    .chat-log p {
+        margin: 5px 0; /* Adjust spacing within chat log */
     }
 
     .evaluation {
-      background: #d8f5f8;
-      padding: 10px;
-      margin-top: 10px;
-      border-left: 4px solid #0099cc;
-      border-radius: 5px;
+      background: #e0f7fa; /* Light cyan */
+      padding: 15px;
+      margin-top: 20px;
+      border-left: 5px solid #0099cc; /* Darker blue border */
+      border-radius: 8px;
+    }
+
+    .evaluation strong {
+        color: #007bb5; /* Stronger blue for evaluation labels */
     }
 
     .evaluation.rh {
-      background: #ffe8e8;
-      border-left: 4px solid #cc0000;
+      background: #ffeeee; /* Very light red */
+      border-left: 5px solid var(--secondary-red); /* Strong red border */
+    }
+    .evaluation.rh strong {
+        color: var(--secondary-red); /* Strong red for RH labels */
     }
 
     video {
       width: 100%;
-      max-width: 400px;
-      margin-top: 10px;
-      border-radius: 6px;
+      max-width: 500px; /* Slightly larger video preview */
+      margin-top: 20px; /* More margin */
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1); /* Subtle shadow on video */
+      display: block; /* Ensures it takes full width up to max-width */
     }
 
-    .users-section {
-      background: #ffffff;
+    .users-section, .summary-row {
+      background: var(--bg-white);
       margin-top: 40px;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 6px 20px var(--shadow-light);
+      border: 1px solid var(--border-color);
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 10px;
+      margin-top: 20px;
     }
 
     th, td {
-      border: 1px solid #ccc;
-      padding: 8px;
-      text-align: center;
+      border: 1px solid var(--border-color);
+      padding: 12px 8px; /* More padding in table cells */
+      text-align: left; /* Align text left for better readability */
+      font-size: 14px;
     }
 
     th {
-      background-color: #f0f0f0;
+      background-color: #f8f8f8; /* Lighter grey for headers */
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      color: var(--primary-dark);
+      text-transform: uppercase; /* Uppercase table headers */
+    }
+    
+    tr:nth-child(even) { /* Zebra striping for tables */
+        background-color: #fdfdfd;
+    }
+    tr:hover { /* Hover effect for table rows */
+        background-color: #f0f8ff;
     }
 
     h2, h3 {
-      margin-top: 30px;
-      color: #0c0e2c;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      color: var(--primary-dark);
+      margin-top: 0; /* Reset margin from previous style */
     }
 
-    form input[type="text"], form input[type="email"], form input[type="date"] {
-      margin: 5px;
-      padding: 8px;
-      border-radius: 4px;
+    /* Form styling */
+    form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px; /* Spacing between form elements */
+        margin-top: 15px;
+        align-items: center;
+    }
+    form.user-management-actions { /* Styles for inline forms in user actions */
+        display: inline-flex;
+        margin: 0;
+        gap: 5px;
+    }
+
+    form input[type="text"], 
+    form input[type="email"], 
+    form input[type="date"],
+    form input[type="password"] { /* Added password type for login if needed */
+      flex: 1; /* Allow inputs to grow */
+      min-width: 150px; /* Minimum width for inputs */
+      padding: 10px 12px;
+      border-radius: 6px;
       border: 1px solid #ccc;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
+      transition: border-color 0.2s ease;
+    }
+    form input:focus {
+        border-color: var(--primary-light);
+        outline: none;
     }
 
     form button {
-      padding: 6px 12px;
-      margin: 5px;
+      padding: 10px 18px; /* Larger buttons */
       border: none;
-      border-radius: 4px;
-      background-color: #00bfff;
+      border-radius: 6px;
+      background-color: var(--primary-light);
       color: white;
       cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+      white-space: nowrap; /* Prevent button text from wrapping */
     }
 
     form button:hover {
       background-color: #009acd;
+      transform: translateY(-1px); /* Slight lift effect */
+    }
+    form button:active {
+        transform: translateY(0); /* Press down effect */
     }
 
-    .summary-row {
-      background: #e3f2fd;
-      padding: 10px;
-      border-radius: 8px;
-      margin-top: 30px;
+    /* Specific button overrides for user actions */
+    form.user-management-actions button {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+    form.user-management-actions button[name="action"][value="toggle"] {
+        background-color: #ffc107; /* Orange for toggle */
+        color: var(--text-dark);
+    }
+    form.user-management-actions button[name="action"][value="toggle"]:hover {
+        background-color: #e0a800;
+    }
+    form.user-management-actions button[name="action"][value="regen_token"] {
+        background-color: #6c757d; /* Grey for new token */
+    }
+    form.user-management-actions button[name="action"][value="regen_token"]:hover {
+        background-color: #5a6268;
+    }
+
+    .summary-row h3 {
+      font-size: 20px;
     }
 
     .progress-bar {
-      background: #ddd;
-      border-radius: 6px;
+      background: #e9ecef; /* Lighter background for bar */
+      border-radius: 8px;
       overflow: hidden;
-      height: 20px;
-      margin-top: 8px;
+      height: 25px; /* Taller bar */
+      margin-top: 15px;
+      border: 1px solid #dee2e6;
     }
 
     .progress-fill {
       height: 100%;
-      background: #00bfff;
-      transition: width 0.3s ease;
+      background: linear-gradient(to right, #00bfff, #007bff); /* Gradient for progress */
+      transition: width 0.4s ease-out; /* Smoother transition */
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 10px;
+      box-sizing: border-box;
+      color: white;
+      font-weight: bold;
+      font-size: 0.9em;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+    }
+    .progress-fill span {
+        white-space: nowrap;
+    }
+
+    /* Styles for the new structured RH analysis (from previous iteration) */
+    .evaluation.rh h4 {
+        color: var(--secondary-red); /* Darker red for sub-headings */
+        margin-top: 15px;
+        margin-bottom: 5px;
+        font-family: 'Montserrat', sans-serif;
+        font-weight: 600;
+    }
+
+    .evaluation.rh ul {
+        list-style-type: none; /* Remove default bullets */
+        padding-left: 0;
+        margin-left: 0;
+    }
+
+    .evaluation.rh li {
+        margin-bottom: 8px;
+        padding-left: 20px; /* Indent list items */
+        position: relative; /* For custom bullet points */
+    }
+    .evaluation.rh li::before { /* Custom bullet points */
+        content: '•';
+        color: var(--primary-light); /* Blue bullet */
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+    .evaluation.rh li strong {
+        color: var(--text-dark); /* Ensure strong text is dark */
+    }
+    .metric-line {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px dashed #f0c0c0;
+        font-size: 0.95em;
+    }
+    .metric-line:last-child {
+        border-bottom: none;
+    }
+    .metric-label {
+        font-weight: 600; /* Bolder label */
+    }
+    .metric-value {
+        text-align: right;
+        font-weight: 400;
+    }
+    .status-icon {
+        font-size: 1.1em;
+        margin-right: 5px;
+    }
+
+    /* Footer styling */
+    footer {
+        text-align: center;
+        padding: 30px;
+        margin-top: 50px;
+        font-size: 0.9em;
+        color: #777;
+        border-top: 1px solid #eee;
+        background-color: var(--bg-white);
+    }
+    footer a {
+        color: var(--primary-light);
+        text-decoration: none;
+        font-weight: 600;
+    }
+    footer a:hover {
+        text-decoration: underline;
+    }
+
+    /* Adjust specific forms for layout */
+    .users-section form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+        align-items: end;
+    }
+    .users-section form button {
+        grid-column: span 1; /* Ensure button fits in grid */
+    }
+    .users-section form input {
+        width: auto; /* Let grid control width */
+    }
+    .users-section form label {
+        display: block; /* Ensure labels are on their own line */
+        margin-bottom: 5px;
+        font-weight: 600;
+        color: #555;
+    }
+    .users-section form input[type="date"] {
+        min-width: 120px;
+    }
+    .users-section h3 { /* For "Crear nuevo usuario" */
+        margin-top: 30px;
+        padding-top: 15px;
+        border-top: 1px dashed var(--border-color);
     }
   </style>
 </head>
 <body>
   <header>
+    <img src="{{ url_for('static', filename='logo-alfasigma.png') }}" alt="Alfasigma">
     <h1>📊 Panel de RH - Evaluación de Sesiones</h1>
   </header>
 
   <div class="container">
+    <h2 class="section-title">Resultados de Sesiones Individuales</h2>
     {% for row in data %}
       <div class="session-entry">
         <h3>{{ row[0] }} ({{ row[1] }})</h3>
-        <p><strong>Escenario:</strong> {{ row[2] }}<br>
-        <strong>Fecha:</strong> {{ row[6] }}</p>
+        <p class="session-info">
+            <strong>Escenario:</strong> {{ row[2] }}<br>
+            <strong>Fecha:</strong> {{ row[6] }}
+        </p>
 
         <div class="chat-log">
           <p><strong>Participante:</strong> {{ row[3] }}</p>
@@ -165,7 +405,7 @@
         {% if row[5] %}
           <video controls src="/video/{{ row[5] }}"></video>
         {% else %}
-          <p style="color: gray;">🎥 No se encontró video para esta sesión.</p>
+          <p style="color: gray; text-align: center;">🎥 No se encontró video para esta sesión.</p>
         {% endif %}
 
         <div class="evaluation">
@@ -175,13 +415,122 @@
 
         <div class="evaluation rh">
           <strong>Análisis para RH:</strong><br>
-          {{ row[8] }}
+          {% if row[8].error %}
+            <p style="color: var(--secondary-red); font-weight: bold;">Error al cargar el análisis: {{ row[8].error }}</p>
+            <pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 0.85em; background: #fdfdff; padding: 10px; border-radius: 5px;">{{ row[8].raw_content if row[8].raw_content else 'Contenido RAW no disponible.' }}</pre>
+          {% else %}
+            <p><strong>Resumen General RH:</strong> {{ row[8].overall_rh_summary }}</p>
+
+            <h4>🎯 Aplicación del Modelo de Ventas (Da Vinci)</h4>
+            <div style="border: 1px solid var(--border-color); padding: 10px; border-radius: 5px;">
+                <div class="metric-line">
+                    <span class="metric-label">Diagnóstico:</span>
+                    <span class="metric-value">{{ row[8].sales_model_simple_detection.diagnostico }}</span>
+                </div>
+                <div class="metric-line">
+                    <span class="metric-label">Argumentación:</span>
+                    <span class="metric-value">{{ row[8].sales_model_simple_detection.argumentacion }}</span>
+                </div>
+                <div class="metric-line">
+                    <span class="metric-label">Validación:</span>
+                    <span class="metric-value">{{ row[8].sales_model_simple_detection.validacion }}</span>
+                </div>
+                <div class="metric-line">
+                    <span class="metric-label">Cierre:</span>
+                    <span class="metric-value">{{ row[8].sales_model_simple_detection.cierre }}</span>
+                </div>
+                <p style="text-align: right; margin-top: 5px; font-size: 0.85em; color: #666;">
+                    (Pasos detectados por análisis simple: {{ row[8].sales_model_simple_detection.steps_applied_count }})
+                </p>
+            </div>
+
+            <h4>🧠 Conocimientos y Habilidades Clave</h4>
+            <div style="border: 1px solid var(--border-color); padding: 10px; border-radius: 5px;">
+                <div class="metric-line">
+                    <span class="metric-label">Palabras clave científicas:</span>
+                    <span class="metric-value">{{ row[8].knowledge_score }}</span>
+                </div>
+                <div class="metric-line">
+                    <span class="metric-label">Escucha Activa (Simple):</span>
+                    <span class="metric-value">{{ row[8].active_listening_simple_detection }}</span>
+                </div>
+                <div class="metric-line">
+                    <span class="metric-label">Presencia en Video:</span>
+                    <span class="metric-value">{{ row[8].visual_presence }} ({{ row[8].visual_percentage }})</span>
+                </div>
+            </div>
+
+            {% if row[8].gpt_detailed_feedback %}
+              <h4>Comentarios Detallados de la Inteligencia Artificial:</h4>
+              <div style="background: #fdfdff; padding: 15px; border-radius: 8px; border: 1px solid #e9e9e9;">
+                {% if row[8].gpt_detailed_feedback.overall_evaluation %}
+                  <p><strong>Evaluación General de la IA:</strong> {{ row[8].gpt_detailed_feedback.overall_evaluation }}</p>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.da_vinci_model_feedback %}
+                  <p><strong>Análisis de Fases del Modelo Da Vinci:</strong></p>
+                  <ul>
+                    {% for phase, details in row[8].gpt_detailed_feedback.da_vinci_model_feedback.items() %}
+                      <li><strong>{{ phase | capitalize }}:</strong> <span style="font-weight: bold; color: var(--primary-dark);">{{ details.score }}</span> - {{ details.feedback }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.insights_discovery_adaptation %}
+                  <p><strong>Adaptación al Estilo del Médico (Insights Discovery):</strong></p>
+                  <ul>
+                    <li>Tipo inferido de Leo: <span style="font-weight: bold; color: var(--primary-dark);">{{ row[8].gpt_detailed_feedback.insights_discovery_adaptation.inferred_leo_type }}</span></li>
+                    <li>Nivel de adaptación: <span style="font-weight: bold; color: var(--primary-dark);">{{ row[8].gpt_detailed_feedback.insights_discovery_adaptation.adaptation_score }}</span></li>
+                    <li>Comentarios: {{ row[8].gpt_detailed_feedback.insights_discovery_adaptation.feedback }}</li>
+                  </ul>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.objection_handling_feedback and row[8].gpt_detailed_feedback.objection_handling_feedback.objection_detected %}
+                  <p><strong>Manejo de Objeciones:</strong></p>
+                  <ul>
+                    <li>Objeción detectada: <span style="font-weight: bold; color: var(--primary-dark);">Sí</span></li>
+                    <li>Tipo de objeción (MILD): <span style="font-weight: bold; color: var(--primary-dark);">{{ row[8].gpt_detailed_feedback.objection_handling_feedback.type }}</span></li>
+                    <li>APACT aplicado: <span style="font-weight: bold; color: var(--primary-dark);">{{ row[8].gpt_detailed_feedback.objection_handling_feedback.apact_applied }}</span></li>
+                    <li>Comentarios: {{ row[8].gpt_detailed_feedback.objection_handling_feedback.feedback }}</li>
+                  </ul>
+                {% elif row[8].gpt_detailed_feedback.objection_handling_feedback and not row[8].gpt_detailed_feedback.objection_handling_feedback.objection_detected %}
+                  <p><strong>Manejo de Objeciones:</strong> No se detectaron objeciones del médico en esta sesión.</p>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.active_listening_feedback %}
+                  <p><strong>Escucha Activa Detallada:</strong> <span style="font-weight: bold; color: var(--primary-dark);">{{ row[8].gpt_detailed_feedback.active_listening_feedback.score }}</span> - {{ row[8].gpt_detailed_feedback.active_listening_feedback.feedback }}</p>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.strengths %}
+                  <p><strong>Puntos Fuertes Identificados por la IA:</strong></p>
+                  <ul>
+                    {% for strength in row[8].gpt_detailed_feedback.strengths %}
+                      <li>{{ strength }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row[8].gpt_detailed_feedback.areas_for_improvement_specific %}
+                  <p><strong>Áreas de Mejora Específicas (Sugerencias de la IA para Coaching):</strong></p>
+                  <ul>
+                    {% for area in row[8].gpt_detailed_feedback.areas_for_improvement_specific %}
+                      <li>{{ area }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+              </div>
+            {% else %}
+              <p>No hay feedback detallado de la IA disponible para esta sesión.</p>
+            {% endif %}
+
+          {% endif %} {# End if row[8].error #}
         </div>
       </div>
     {% endfor %}
 
+    <h2 class="section-title">📈 Resumen de Tiempo por Usuario</h2>
     <div class="summary-row">
-      <h2>📈 Resumen de Tiempo por Usuario</h2>
       <table>
         <tr><th>Nombre</th><th>Email</th><th>Minutos usados</th><th>Resumen ejecutivo</th></tr>
         {% for summary in usage_summaries %}
@@ -196,22 +545,31 @@
 
       <h3>Tiempo Total Usado: {{ total_minutes }} / 1050 minutos</h3>
       <div class="progress-bar">
-        <div class="progress-fill" style="width: {{ (total_minutes / 1050) * 100 }}%"></div>
+        <div class="progress-fill" style="width: {{ (total_minutes / 1050) * 100 }}%">
+            <span>{{ (total_minutes / 1050) * 100 | round(1) }}%</span>
+        </div>
       </div>
     </div>
 
+    <h2 class="section-title">🔐 Gestión de Usuarios</h2>
     <div class="users-section">
-      <h2>🔐 Gestión de Usuarios</h2>
+      <h3>Crear nuevo usuario (si no existe) / Ingresar a Dashboard (si ya está creado)</h3>
       <form action="/dashboard" method="POST">
-        <input type="text" name="name" placeholder="Nombre" required>
-        <input type="email" name="email" placeholder="Correo electrónico" required>
-        <input type="text" name="token" placeholder="Token" required>
-        <button type="submit">Ingresar</button>
+        <label for="new_user_name">Nombre:</label>
+        <input type="text" id="new_user_name" name="name" placeholder="Nombre" required>
+
+        <label for="new_user_email">Correo electrónico:</label>
+        <input type="email" id="new_user_email" name="email" placeholder="Correo electrónico" required>
+
+        <label for="new_user_token">Token:</label>
+        <input type="text" id="new_user_token" name="token" placeholder="Token" required>
+        
+        <button type="submit">Ingresar a Dashboard</button>
       </form>
 
       <table>
         <tr>
-          <th>Nombre</th><th>Email</th><th>Token</th><th>Rango</th><th>Activo</th><th>Acciones</th>
+          <th>Nombre</th><th>Email</th><th>Token</th><th>Rango de Fechas</th><th>Activo</th><th>Acciones</th>
         </tr>
         {% for u in users %}
         <tr>
@@ -221,11 +579,11 @@
           <td>{{ u[3] }} → {{ u[4] }}</td>
           <td>{{ "Sí" if u[5] else "No" }}</td>
           <td>
-            <form method="POST" style="display:inline;">
+            <form method="POST" class="user-management-actions">
               <input type="hidden" name="user_id" value="{{ u[0] }}">
               <button name="action" value="toggle">Activar/Desactivar</button>
             </form>
-            <form method="POST" style="display:inline;">
+            <form method="POST" class="user-management-actions">
               <input type="hidden" name="user_id" value="{{ u[0] }}">
               <button name="action" value="regen_token">Nuevo Token</button>
             </form>
@@ -234,14 +592,22 @@
         {% endfor %}
       </table>
 
-      <h3>➕ Crear nuevo usuario</h3>
+      <h3 style="margin-top: 30px; border-top: 1px dashed var(--border-color); padding-top: 15px;">➕ Crear nuevo usuario para Acceso de RH</h3>
       <form method="POST">
         <input type="hidden" name="action" value="add">
-        Nombre: <input name="name" type="text">
-        Email: <input name="email" type="email">
-        Inicio: <input name="start_date" type="date">
-        Fin: <input name="end_date" type="date">
-        <button type="submit">Guardar</button>
+        <label for="add_name">Nombre:</label>
+        <input name="name" type="text" id="add_name" required>
+
+        <label for="add_email">Email:</label>
+        <input name="email" type="email" id="add_email" required>
+
+        <label for="start_date">Inicio:</label>
+        <input name="start_date" type="date" id="start_date" required>
+
+        <label for="end_date">Fin:</label>
+        <input name="end_date" type="date" id="end_date" required>
+        
+        <button type="submit">Guardar Nuevo Usuario</button>
       </form>
     </div>
   </div>
