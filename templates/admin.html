@@ -525,6 +525,12 @@
             {% endif %}
 
           {% endif %} {# End if row[8].error #}
+          <div style="margin-top: 20px; text-align: right;">
+        <form action="/admin/delete_session/{{ row[0] }}" method="POST" onsubmit="return confirm('¿Estás seguro de que quieres eliminar esta sesión y su video?');">
+          <button type="submit" style="background-color: #dc3545; color: white; padding: 8px 15px; border-radius: 5px; border: none; cursor: pointer;">
+            🗑️ Eliminar Sesión
+          </button>
+        </form>
         </div>
       </div>
     {% endfor %}

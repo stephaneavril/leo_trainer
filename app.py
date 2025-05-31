@@ -636,6 +636,46 @@ def end_session_redirect():
         return redirect(url_for('dashboard', name=name, email=email), code=307 if request.method == "POST" else 302)
     return redirect(url_for('index'))
 
+@app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
+def delete_session(session_id):
+    if not session.get("admin"):
+        return redirect("/login") # Ensure only admins can delete
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    try:
+        # 1. Get the video file path from the database
+        c.execute("SELECT audio_path FROM interactions WHERE id = ?", (session_id,))
+        row = c.fetchone()
+
+        if row and row[0]: # Check if a record and audio_path exist
+            video_filename = row[0]
+            video_filepath = os.path.join(AUDIO_FOLDER, video_filename)
+
+            # 2. Delete the physical video file
+            if os.path.exists(video_filepath):
+                os.remove(video_filepath)
+                print(f"[DELETE] Successfully deleted video file: {video_filepath}")
+            else:
+                print(f"[DELETE WARNING] Video file not found at: {video_filepath} (record will still be deleted)")
+
+            # 3. Delete the record from the database
+            c.execute("DELETE FROM interactions WHERE id = ?", (session_id,))
+            conn.commit()
+            print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
+            return redirect("/admin") # Redirect back to admin panel
+        else:
+            print(f"[DELETE ERROR] Session or video path not found for ID: {session_id}")
+            return "Sesión no encontrada o sin video asociado.", 404
+
+    except Exception as e:
+        conn.rollback() # Rollback changes if an error occurs
+        print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
+        return f"Error al eliminar la sesión: {str(e)}", 500
+    finally:
+        conn.close()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     # In production, set debug=False and use a production WSGI server like Gunicorn
