@@ -32,7 +32,7 @@ except Exception as e:
     whisper_model = None # Handle case where model fails to load
 
 # --- Configuration ---
-AUDIO_FOLDER = "static/audio"
+AUDIO_FOLDER = "/var/data/uploaded_videos" # Use the actual mount path + a subdirectory
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
 app = Flask(__name__)

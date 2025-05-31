@@ -213,7 +213,7 @@
       const email = "{{ email }}";
       const scenario = "{{ scenario }}";
       const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
-      const remainingTime = Math.max(600 - usedSeconds, 0); // 10 minutes total
+      const remainingTime = Math.max(300 - usedSeconds, 0); // 5 minutes total
 
       const endBtn = document.getElementById("end-btn");
       const summaryBox = document.getElementById("summary-box");
@@ -238,7 +238,7 @@
         sessionEnded = true;
         clearInterval(interval); // Stop the countdown timer
 
-        const duration = 600 - countdown; // Calculate actual session duration
+        const duration = 300 - countdown; // Calculate actual session duration (for 5 minutes)
         document.getElementById("recording-indicator")?.remove();
         endBtn.disabled = true;
         endBtn.textContent = "Guardando...";
@@ -398,8 +398,15 @@
       };
 
       // Initial camera and microphone permission request
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+     try {
+        stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: {
+                width: { ideal: 640, max: 640 }, // Request 480p width
+                height: { ideal: 480, max: 480 },   // Request 480p height
+                frameRate: { ideal: 15, max: 24 } // Optionally, reduce frame rate
+            }
+        });
         const preview = document.createElement("video");
         preview.srcObject = stream;
         preview.autoplay = true;
