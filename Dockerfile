@@ -12,6 +12,10 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
+# --- AÑADE ESTA LÍNEA AQUÍ ---
+ENV PATH="/usr/local/bin:$PATH"
+# -----------------------------
+
 # Copia el resto del código
 COPY . .
 
