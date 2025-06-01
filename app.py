@@ -32,16 +32,15 @@ except Exception as e:
     whisper_model = None # Handle case where model fails to load
 
 # --- Configuration ---
-AUDIO_FOLDER = "/var/data/uploaded_videos" # Use the actual mount path + a subdirectory
+AUDIO_FOLDER = "/var/data/" # Use the actual mount path + a subdirectory
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = AUDIO_FOLDER
 
 app = Flask(__name__)
 CORS(app) # Enable CORS for frontend communication
 
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") # Use a strong, unique key in .env
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") # Change this for production!
-
-app.config['UPLOAD_FOLDER'] = AUDIO_FOLDER
 
 DB_PATH = "logs/interactions.db"
 os.makedirs("logs", exist_ok=True)
