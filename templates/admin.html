@@ -403,8 +403,7 @@
         </div>
 
         {% if row[5] %}
-          <video controls src="/video/{{ row[5] }}"></video>
-        {% else %}
+          <video controls src="{{ row[5] }}"></video> {% else %}
           <p style="color: gray; text-align: center;">🎥 No se encontró video para esta sesión.</p>
         {% endif %}
 
@@ -611,7 +610,7 @@
         <input name="start_date" type="date" id="start_date" required>
 
         <label for="end_date">Fin:</label>
-        <input name="end_date" type="date" id="end_date" required>
+        <input type="date" id="end_date" required>
         
         <button type="submit">Guardar Nuevo Usuario</button>
       </form>

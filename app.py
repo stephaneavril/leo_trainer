@@ -58,7 +58,17 @@ except Exception as e:
 TEMP_PROCESSING_FOLDER = "/tmp/leo_trainer_processing/"
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
-app = Flask(__name__)
+# Obtener la ruta del directorio actual donde se ejecuta app.py
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+# --- INICIALIZAR FLASK CON RUTAS DE PLANTILLAS Y ESTÁTICOS ---
+# Flask busca 'templates' y 'static' en la misma carpeta que el archivo app.py
+# Al especificar template_folder y static_folder, nos aseguramos de que Flask los encuentre.
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+    static_folder=os.path.join(BASE_DIR, 'static')
+)
 CORS(app) # Enable CORS for frontend communication
 
 # app.config['UPLOAD_FOLDER'] ya no es el destino final, es solo temporal si se usa
@@ -374,7 +384,7 @@ def process_session_video(data):
     # --- Retornar resultados para que el Web Service los guarde en la DB ---
     # La tarea ahora devuelve todos los datos relevantes, incluyendo la URL final del video en S3
     return {
-        "status": "ok",
+        "status": "ok" if db_status == "ok" else "error",
         "evaluation": public_summary,
         "tip": tip_text,
         "visual_feedback": posture_feedback,
