@@ -16,6 +16,9 @@ import mediapipe as mp
 import subprocess # For ffmpeg
 import secrets # For token generation
 import json 
+from celery import Celery 
+from celery_worker import celery_app
+
 
 print("\U0001F680 Iniciando Leo Virtual Trainer...")
 
@@ -117,6 +120,247 @@ def patch_db_schema():
 # Initialize and patch DB on app startup
 init_db()
 patch_db_schema()
+
+@celery_app.task
+def process_session_video(data):
+    """
+    Celery task to handle video processing and session logging.
+    This function contains the logic previously in log_full_session.
+    """
+    # Re-initialize any necessary app-specific resources if they don't persist
+    # e.g., OpenAI client, Whisper model (if not already loaded globally in worker)
+    # Be careful with global variables in workers; re-loading might be necessary
+    # or pass necessary configs.
+    # For Whisper, if it's already loaded globally when celery_worker.py starts,
+    # you can just access `whisper_model`.
+
+    # Example: Re-initializing OpenAI client within the task if not global
+    # client = openai
+    # if not openai.api_key:
+    #    openai.api_key = os.getenv("OPENAI_API_KEY")
+
+    name = data.get("name")
+    email = data.get("email")
+    scenario = data.get("scenario")
+    conversation = data.get("conversation", [])
+    duration = int(data.get("duration", 0))
+    video_filename = data.get("video_filename")
+
+    timestamp = datetime.now().isoformat()
+    transcribed_text = ""
+    public_summary = "Evaluación no disponible."
+    internal_summary = "Evaluación no disponible."
+    tip_text = "Consejo no disponible."
+    posture_feedback = "Análisis visual no realizado."
+
+    if not video_filename:
+        print("[ERROR] process_session_video: No se recibió video_filename.")
+        return {"status": "error", "error": "No se recibió el nombre del archivo de video."}
+
+    original_webm_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+    mp4_filepath = os.path.join(app.config['UPLOAD_FOLDER'], video_filename.replace('.webm', '.mp4'))
+    temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f"audio_from_{video_filename.split('.')[0]}.wav")
+
+    # --- VIDEO CONVERSION AND AUDIO EXTRACTION ---
+    if not os.path.exists(original_webm_path):
+        print(f"[ERROR] Original WEBM video file not found: {original_webm_path}")
+        return {"status": "error", "error": f"Archivo de video WEBM no encontrado: {original_webm_path}"}
+
+    print(f"[INFO] Processing video: {original_webm_path}")
+    if convert_webm_to_mp4(original_webm_path, mp4_filepath):
+        video_to_process_path = mp4_filepath
+        print(f"[INFO] Converted to MP4: {mp4_filepath}")
+    else:
+        video_to_process_path = original_webm_path # Try processing original if conversion fails
+        print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {original_webm_path}")
+
+    video_clip = None
+    try:
+        # --- TRANSCRIPTION (from video's audio) ---
+        if whisper_model: # Access the globally loaded whisper_model
+            try:
+                video_clip = VideoFileClip(video_to_process_path)
+                if video_clip.audio:
+                    print("[INFO] Extracting audio from video...")
+                    video_clip.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+                    transcription_result = whisper_model.transcribe(temp_audio_path)
+                    transcribed_text = transcription_result.get("text", "").strip()
+                    print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
+                else:
+                    print("⚠️ El video no tiene pista de audio para transcribir.")
+            except Exception as e:
+                print(f"[ERROR] Error durante la extracción de audio o transcripción: {e}")
+                transcribed_text = "Error en transcripción."
+            finally:
+                if video_clip:
+                    video_clip.close()
+                if os.path.exists(temp_audio_path):
+                    os.remove(temp_audio_path)
+        else:
+            print("[WARNING] Whisper model not loaded, skipping audio transcription.")
+
+        # --- Prepare text for GPT evaluation ---
+        user_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
+        final_user_text = transcribed_text if transcribed_text.strip() else user_dialogue
+        leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'agent'])
+        if not leo_dialogue:
+            leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
+
+        full_conversation_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
+
+        if not final_user_text.strip() and not leo_dialogue.strip():
+            print("[ERROR] No hay texto de usuario ni de Leo para evaluar.")
+            return {
+                "status": "error",
+                "evaluation": "No se encontró contenido válido para evaluar.",
+                "tip": "Asegúrate de hablar y de que el asistente Leo también responda durante la sesión."
+            }
+
+        # --- AI EVALUATION (GPT) ---
+        try:
+            summaries = evaluate_interaction(final_user_text, leo_dialogue)
+            public_summary = summaries.get("public", public_summary)
+            internal_summary = summaries.get("internal", internal_summary)
+            print(f"[INFO] AI Evaluation successful. Public: {public_summary[:50]}...")
+        except Exception as e:
+            public_summary = "⚠️ Evaluación automática no disponible."
+            internal_summary = f"❌ Error en evaluación: {str(e)}"
+            print(f"[ERROR] Error calling evaluate_interaction: {e}")
+
+        # --- PERSONALIZED TIP (GPT) ---
+        try:
+            tip_completion = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "Eres un coach médico empático y útil. Ofrece 2-3 consejos prácticos, claros y concretos sobre cómo mejorar las interacciones de un representante médico con doctores. Enfócate en el participante."},
+                    {"role": "user", "content": f"Basado en esta conversación:\n\nParticipante: {final_user_text}\nLeo: {leo_dialogue}\n\n¿Qué podría hacer mejor el participante la próxima vez? Ofrece consejos accionables y positivos."}
+                ],
+                temperature=0.7,
+            )
+            tip_text = tip_completion.choices[0].message.content.strip()
+            print(f"[INFO] AI Tip generated: {tip_text[:50]}...")
+        except Exception as e:
+            tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
+            print(f"[ERROR] Error generating personalized tip: {e}")
+
+        # --- VISUAL ANALYSIS ---
+        if video_to_process_path and os.path.exists(video_to_process_path):
+            try:
+                print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
+                video_stats = analyze_video_posture(video_to_process_path)
+                if video_stats["error"]:
+                    posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
+                elif video_stats['frames_total'] > 0:
+                    visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
+                    posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
+                else:
+                    posture_feedback = "No se pudieron analizar frames de video."
+                print(f"[POSTURA] {posture_feedback}")
+            except Exception as e:
+                posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
+                print(f"[ERROR] Unexpected error in visual analysis: {e}")
+        else:
+            print(f"[WARNING] Skipping visual analysis: Video file not found at {video_to_process_path}")
+            posture_feedback = "Video no disponible para análisis visual."
+
+        # --- SAVE TO DATABASE ---
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        try:
+            c.execute("""INSERT INTO interactions (
+                name, email, scenario, message, response, timestamp,
+                evaluation, evaluation_rh, duration_seconds, tip,
+                audio_path, visual_feedback
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
+                public_summary, internal_summary, duration, tip_text,
+                video_filename, posture_feedback # Store the original webm filename
+            ))
+            conn.commit()
+            print(f"[DB] Interaction saved for {email}, scenario {scenario}.")
+            db_status = "ok"
+        except Exception as e:
+            print(f"[ERROR] Database insert failed: {e}")
+            db_status = "error"
+        finally:
+            conn.close()
+
+        # --- Cleanup temporary files AND original WEBM ---
+        try:
+            if os.path.exists(mp4_filepath):
+                os.remove(mp4_filepath)
+                print(f"Cleaned up {mp4_filepath}")
+            if os.path.exists(original_webm_path): # ADDED: Delete original WEBM
+                os.remove(original_webm_path)
+                print(f"Cleaned up original WEBM: {original_webm_path}")
+        except Exception as e:
+            print(f"[CLEANUP ERROR] Failed to remove temp/original files: {e}")
+
+        # Return results that can be stored or used by frontend for polling
+        return {
+            "status": "ok" if db_status == "ok" else "error",
+            "evaluation": public_summary,
+            "tip": tip_text,
+            "visual_feedback": posture_feedback
+        }
+    except Exception as general_error:
+        print(f"[CRITICAL ERROR] Unhandled error in process_session_video task: {general_error}")
+        # Log unexpected errors to ensure they are captured
+        return {"status": "error", "error": f"Internal server error during processing: {str(general_error)}"}
+
+
+@app.route("/log_full_session", methods=["POST"])
+def log_full_session_api():
+    """
+    This route now simply uploads the video and enqueues the processing task.
+    It returns immediately to the client.
+    """
+    data = request.get_json() # Get JSON data for other parameters
+    name = data.get("name")
+    email = data.get("email")
+    scenario = data.get("scenario")
+    conversation = data.get("conversation", [])
+    duration = int(data.get("duration", 0))
+    # video_filename will come from the separate /upload_video endpoint
+    video_filename = data.get("video_filename")
+
+    if not video_filename:
+        return jsonify({"status": "error", "error": "No video filename provided."}), 400
+
+    # Enqueue the task
+    # Pass all necessary data for the task
+    task_data = {
+        "name": name,
+        "email": email,
+        "scenario": scenario,
+        "conversation": conversation,
+        "duration": duration,
+        "video_filename": video_filename
+    }
+    task = process_session_video.apply_async(args=[task_data]) # Enqueue the task
+    print(f"[INFO] Task enqueued with ID: {task.id}")
+
+    return jsonify({
+        "status": "processing",
+        "task_id": task.id,
+        "message": "Sesión registrada, evaluación en progreso."
+    })
+
+# Add a new endpoint for clients to poll the task status
+@app.route("/task_status/<task_id>", methods=["GET"])
+def get_task_status(task_id):
+    task = process_session_video.AsyncResult(task_id)
+    if task.state == 'PENDING':
+        response = {"status": "pending", "message": "Task is pending..."}
+    elif task.state == 'STARTED':
+        response = {"status": "processing", "message": "Task is processing..."}
+    elif task.state == 'SUCCESS':
+        response = {"status": "completed", "result": task.result}
+    elif task.state == 'FAILURE':
+        response = {"status": "failed", "message": str(task.info)}
+    else:
+        response = {"status": task.state, "message": "Unknown state"}
+    return jsonify(response)
 
 # ----------------------
 # Helper Functions
