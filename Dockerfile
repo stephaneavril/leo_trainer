@@ -1,20 +1,17 @@
-# Usa una imagen base de Python liviana
 FROM python:3.11-slim
 
-# Instala ffmpeg y otras dependencias básicas
-RUN apt-get update && apt-get install -y ffmpeg
+# Instala ffmpeg y git
+RUN apt-get update && apt-get install -y ffmpeg git
 
-# Establece el directorio de trabajo
+# Copia los archivos del proyecto
 WORKDIR /app
-
-# Copia los archivos del proyecto al contenedor
 COPY . /app
 
-# Actualiza pip e instala las dependencias
+# Instala dependencias
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Expone el puerto que usa tu app (ajusta si es diferente)
+# Expone el puerto de Flask
 EXPOSE 10000
 
 # Comando para iniciar tu app
