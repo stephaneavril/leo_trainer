@@ -676,6 +676,10 @@ def delete_session(session_id):
     finally:
         conn.close()
 
+@app.route("/healthz")
+def health_check():
+    return "OK", 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     # In production, set debug=False and use a production WSGI server like Gunicorn
