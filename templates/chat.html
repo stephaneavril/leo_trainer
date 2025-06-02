@@ -39,7 +39,7 @@
     }
 
     #summary-box {
-      display: none;
+      display: none; /* This will now always be hidden as we redirect */
       margin-top: 50px;
       background-color: #1f1f3a;
       padding: 20px;
@@ -142,7 +142,7 @@
   <button id="end-btn">Finalizar sesión</button>
   <div id="timer">Duración: 05:00</div>
 
-  <div id="summary-box">
+  <div id="summary-box" style="display:none;">
     <h2>✅ Resumen de desempeño</h2>
     <p id="evaluation-text"></p>
     <div id="extra-tip" style="display:none; margin-top: 30px; background: #f5faff; padding: 20px; border-left: 4px solid #00bfff; border-radius: 8px; color: #222;">
@@ -156,7 +156,7 @@
     </form>
   </div>
 
-    <div id="ia-progress" style="display:none; margin-top:20px; width:100%; max-width:400px; margin: auto;">
+  <div id="ia-progress" style="display:none; margin-top:20px; width:100%; max-width:400px; margin: auto;">
     <div style="background:#333; height:20px; border-radius:10px; overflow:hidden;">
       <div id="ia-bar" style="width:0%; height:100%; background:#00e0ff;"></div>
     </div>
@@ -164,13 +164,8 @@
   </div>
 
   <script>
-    let messages = []; // Global array to capture the actual dialogue
-
-    // Function to register messages (needs to be called by D-ID agent events)
-    function registrarMensaje(role, text) {
-      messages.push({ role, text });
-      console.log(`💬 ${role}: ${text}`);
-    }
+    // Removed the 'messages' array and 'registrarMensaje' function as they are no longer needed
+    // for D-ID conversation capture. User speech will come from Whisper transcription of video.
 
     // Doc Panel Toggle
     const docBtn = document.getElementById("doc-toggle");
@@ -190,21 +185,12 @@
     // !! IMPORTANT: Replace with your actual D-ID Client Key and Agent ID
     agent.setAttribute("data-client-key", "Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN");
     agent.setAttribute("data-agent-id", "agt_8nBIc-s-");
-    agent.setAttribute("data-monitor", "true"); // Keep this true for monitoring D-ID events
+    agent.setAttribute("data-monitor", "false"); // Set to false, as we are not monitoring D-ID events for conversation capture
     document.getElementById("ai-agent").appendChild(agent);
 
-    // !! IMPORTANT: INTEGRATE D-ID EVENTS TO POPULATE 'messages' ARRAY
-    // The D-ID agent likely emits events when it speaks or hears user input.
-    // You need to listen for these events and call `registrarMensaje`.
-    // Example (refer to D-ID SDK documentation for exact event names and data structure):
-    /*
-    document.addEventListener('did-agent-event-name-for-agent-speak', (event) => {
-      registrarMensaje('agent', event.detail.text);
-    });
-    document.addEventListener('did-agent-event-name-for-user-input', (event) => {
-      registrarMensaje('user', event.detail.text);
-    });
-    */
+    // !! IMPORTANT: All D-ID event listeners for conversation capture are REMOVED.
+    // The D-ID agent is solely for visual interaction.
+    // User's speech will be transcribed from the recorded video via Whisper.
   </script>
 
   <script>
@@ -216,11 +202,9 @@
       const remainingTime = Math.max(300 - usedSeconds, 0); // 5 minutes total
 
       const endBtn = document.getElementById("end-btn");
-      const summaryBox = document.getElementById("summary-box");
-      const evalText = document.getElementById("evaluation-text");
       const status = document.getElementById("status");
       const timerEl = document.getElementById("timer");
-      const dashBtn = document.getElementById("to-dashboard");
+      const dashBtn = document.getElementById("to-dashboard"); // Still exists for form submission
 
       let recorder, chunks = [], stream;
       let sessionEnded = false;
@@ -241,7 +225,7 @@
         const duration = 300 - countdown; // Calculate actual session duration (for 5 minutes)
         document.getElementById("recording-indicator")?.remove();
         endBtn.disabled = true;
-        endBtn.textContent = "Guardando...";
+        endBtn.textContent = "Finalizando sesión..."; // Updated text
 
         // Stop all media tracks (camera and microphone)
         if (stream) {
@@ -337,9 +321,11 @@
           await updateSimulatedProgress("Saltando subida de video...", 30);
         }
 
-        await updateSimulatedProgress("Enviando registro de sesión...", 60);
+        await updateSimulatedProgress("Enviando registro de sesión para análisis...", 60);
         let sessionData = null;
         try {
+          // Send an empty 'conversation' array since D-ID events are not being captured.
+          // The AI will rely solely on Whisper transcription of the video for user text.
           const sessionRes = await fetch('/log_full_session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -347,54 +333,34 @@
               name,
               email,
               scenario,
-              conversation: messages,
+              conversation: [], // Sending an empty array as D-ID conversation is not captured
               duration,
               video_filename: videoData?.path || null
             })
           });
           sessionData = await sessionRes.json();
-          if (!sessionData.status || sessionData.status !== 'ok') {
-            console.error("Backend did not confirm session saved:", sessionData);
-            alert("⚠️ Error al guardar la sesión. Consulta la consola para más detalles.");
+          // Check for 'processing' status from the new async response
+          if (sessionData.status === 'processing') {
+            console.log("Session processing initiated successfully:", sessionData);
+            await updateSimulatedProgress("Análisis en curso...", 90); // Simulate more progress for async task
           } else {
-            console.log("Session logged successfully. AI evaluation result:", sessionData);
+            console.error("Backend did not confirm session processing:", sessionData);
+            alert("⚠️ Error al iniciar el procesamiento de la sesión. Consulta la consola para más detalles.");
           }
         } catch (error) {
-          console.error("Error logging session:", error);
-          alert("⚠️ Error de red al guardar la sesión. Verifica tu conexión.");
+          console.error("Error logging session or dispatching task:", error);
+          alert("⚠️ Error de red al iniciar el procesamiento de la sesión. Verifica tu conexión.");
         }
 
-        // Assuming AI evaluation is part of the /log_full_session response.
-        // If your AI takes longer, you'd implement polling here (e.g., fetch a '/get_evaluation_status' endpoint).
-        await updateSimulatedProgress("Generando evaluación...", 100); // Finish progress bar
+        await updateSimulatedProgress("Redirigiendo al Dashboard...", 100); // Finish progress bar and update text
 
         // Remove processing message and hide progress bar
         document.getElementById("ia-waiting")?.remove();
         iaProgressDiv.style.display = "none";
 
-        // Display summary based on actual sessionData
-        if (sessionData) {
-          evalText.textContent = sessionData.evaluation || "Evaluación no disponible.";
-          if (sessionData.tip) {
-            document.getElementById("tip-text").textContent = sessionData.tip;
-            document.getElementById("extra-tip").style.display = "block";
-          } else {
-            document.getElementById("extra-tip").style.display = "none";
-          }
-        } else {
-          evalText.textContent = "Hubo un error al obtener la evaluación. Por favor, inténtalo de nuevo.";
-          document.getElementById("extra-tip").style.display = "none";
-        }
+        // Redirect to dashboard immediately after displaying completion and before final timeout
+        document.getElementById("dashboardForm").submit();
 
-        summaryBox.style.display = 'block';
-        endBtn.style.display = "none";
-        timerEl.style.display = "none";
-        dashBtn.style.display = "block"; // Show the dashboard button
-
-        // Redirect to dashboard after a brief delay
-        setTimeout(() => {
-          document.getElementById("dashboardForm").submit();
-        }, 3000);
       };
 
       // Initial camera and microphone permission request

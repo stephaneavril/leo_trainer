@@ -9,15 +9,16 @@ import openai
 import whisper
 import pandas as pd
 import matplotlib.pyplot as plt
-from evaluator import evaluate_interaction # Assuming this is your evaluation logic
-from moviepy.editor import VideoFileClip
-import cv2
-import mediapipe as mp
-import subprocess # For ffmpeg
-import secrets # For token generation
-import json # <-- Asegúrate de que esta línea esté presente
-from celery import Celery # <-- Asegúrate de que esta línea esté presente
-from celery_worker import celery_app # <-- Asegúrate de que esta línea esté presente
+# Removed synchronous processing imports from app.py
+# from evaluator import evaluate_interaction # This is now exclusively in celery_worker.py
+# from moviepy.editor import VideoFileClip
+# import cv2
+# import mediapipe as mp
+# import subprocess # For ffmpeg
+import secrets
+import json
+from celery import Celery
+from celery_worker import celery_app # Ensure this import is correct
 
 # Importar boto3 para S3
 import boto3
@@ -46,6 +47,10 @@ s3_client = boto3.client(
 
 # Load Whisper model once when the app starts
 try:
+    # Whisper model can be loaded in app.py if it's also used here,
+    # but if it's only used by Celery task, move this to celery_worker.py
+    # For now, keeping it here as it was in original to avoid breaking existing flow.
+    # Best practice is to load it only where it's used (i.e., in celery_worker.py)
     whisper_model = whisper.load_model("base")
     print("\U0001F3A7 Whisper model loaded successfully.")
 except Exception as e:
@@ -72,7 +77,7 @@ app = Flask(
 )
 CORS(app) # Enable CORS for frontend communication
 
-@app.before_request # <--- AÑADIR ESTE BLOQUE COMPLETO
+@app.before_request
 def log_request_info():
     print(f"DEBUG_HOOK: Request received: {request.method} {request.path}")
     if request.method == 'POST':
@@ -111,13 +116,13 @@ def init_db():
         scenario TEXT,
         message TEXT,           -- Full conversation text
         response TEXT,          -- Leo's responses consolidated
-        audio_path TEXT,        -- URL del video en S3
+        audio_path TEXT,        -- URL del video en S3 (will be updated by Celery task)
         timestamp TEXT,
-        evaluation TEXT,        -- Public summary from GPT
-        evaluation_rh TEXT,     -- Internal/RH summary from GPT
+        evaluation TEXT,        -- Public summary from GPT (will be updated by Celery task)
+        evaluation_rh TEXT,     -- Internal/RH summary from GPT (will be updated by Celery task)
         duration_seconds INTEGER DEFAULT 0,
-        tip TEXT,               -- Personalized tip from GPT
-        visual_feedback TEXT    -- Feedback from video analysis
+        tip TEXT,               -- Personalized tip from GPT (will be updated by Celery task)
+        visual_feedback TEXT    -- Feedback from video analysis (will be updated by Celery task)
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,7 +176,7 @@ init_db()
 patch_db_schema()
 
 # ----------------------
-# Helper Functions
+# Helper Functions (These are now mostly used by Celery task)
 # ----------------------
 # Función para subir archivo a S3
 def upload_file_to_s3(file_path, bucket, object_name=None):
@@ -199,6 +204,9 @@ def download_file_from_s3(bucket, object_name, file_path):
 
 def convert_webm_to_mp4(input_path, output_path):
     """Converts a .webm video to .mp4 using ffmpeg."""
+    # This function is now logically part of the Celery worker's scope
+    # but kept here if other parts of app.py were to use it synchronously.
+    # For a clean separation, this function should be moved to celery_worker.py or a shared utility.
     try:
         command = [
             "ffmpeg", "-i", input_path,
@@ -223,6 +231,10 @@ def convert_webm_to_mp4(input_path, output_path):
 
 def analyze_video_posture(video_path):
     """Analyzes video for face detection as a proxy for posture/presence."""
+    # This function is now logically part of the Celery worker's scope
+    # For a clean separation, this function should be moved to celery_worker.py or a shared utility.
+    import mediapipe as mp # Import here to avoid top-level dependency if not used synchronously
+    import cv2 # Import here
     mp_face = mp.solutions.face_detection
     summary = {"frames_total": 0, "face_detected_frames": 0, "error": None}
     try:
@@ -247,171 +259,6 @@ def analyze_video_posture(video_path):
         summary["error"] = str(e)
         print(f"[ERROR] Error during video posture analysis: {e}")
     return summary
-
-# ----------------------
-# Celery Task (ahora maneja S3)
-# ----------------------
-@celery_app.task
-def process_session_video(data):
-    name = data.get("name")
-    email = data.get("email")
-    scenario = data.get("scenario")
-    conversation = data.get("conversation", [])
-    duration = int(data.get("duration", 0))
-    # video_object_key es el nombre del archivo en S3 (ej: "usuario_timestamp.webm")
-    video_object_key = data.get("video_object_key")
-
-    timestamp = datetime.now().isoformat()
-    transcribed_text = ""
-    public_summary = "Evaluación no disponible."
-    internal_summary = "Evaluación no disponible."
-    tip_text = "Consejo no disponible."
-    posture_feedback = "Análisis visual no realizado."
-    final_video_s3_url = None # Para almacenar la URL final del MP4 en S3
-
-    if not video_object_key:
-        print("[ERROR] process_session_video: No se recibió video_object_key.")
-        return {"status": "error", "error": "No se recibió el nombre del objeto de video de S3."}
-
-    # --- Descargar WEBM de S3 a una carpeta temporal local para procesamiento ---
-    local_webm_path = os.path.join(TEMP_PROCESSING_FOLDER, video_object_key)
-    if not download_file_from_s3(AWS_S3_BUCKET_NAME, video_object_key, local_webm_path):
-        print(f"[ERROR] process_session_video: No se pudo descargar el video WEBM de S3: {video_object_key}")
-        return {"status": "error", "error": f"No se pudo descargar el video WEBM de S3: {video_object_key}"}
-
-    # --- Conversión y Extracción de Audio (ahora desde el archivo local) ---
-    mp4_object_key = video_object_key.replace('.webm', '.mp4')
-    local_mp4_path = os.path.join(TEMP_PROCESSING_FOLDER, mp4_object_key)
-    temp_audio_path = os.path.join(TEMP_PROCESSING_FOLDER, f"audio_from_{video_object_key.split('.')[0]}.wav")
-
-    print(f"[INFO] Processing local video: {local_webm_path}")
-    if convert_webm_to_mp4(local_webm_path, local_mp4_path):
-        video_to_process_path = local_mp4_path
-        print(f"[INFO] Converted to local MP4: {local_mp4_path}")
-    else:
-        video_to_process_path = local_webm_path # Try processing original if conversion fails
-        print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
-
-    video_clip = None
-    try:
-        if whisper_model:
-            try:
-                video_clip = VideoFileClip(video_to_process_path)
-                if video_clip.audio:
-                    print("[INFO] Extracting audio from video...")
-                    video_clip.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
-                    transcription_result = whisper_model.transcribe(temp_audio_path)
-                    transcribed_text = transcription_result.get("text", "").strip()
-                    print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
-                else:
-                    print("⚠️ El video no tiene pista de audio para transcribir.")
-            except Exception as e:
-                print(f"[ERROR] Error durante la extracción de audio o transcripción: {e}")
-                transcribed_text = "Error en transcripción."
-            finally:
-                if video_clip:
-                    video_clip.close()
-        else:
-            print("[WARNING] Whisper model not loaded, skipping audio transcription.")
-
-        # --- AI Evaluation (GPT) y Personalized Tip (GPT) ---
-        # (La lógica de evaluación y tip se mantiene igual, ya que usa el texto)
-        user_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
-        final_user_text = transcribed_text if transcribed_text.strip() else user_dialogue
-        leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'agent'])
-        if not leo_dialogue:
-            leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
-        full_conversation_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
-
-        if not final_user_text.strip() and not leo_dialogue.strip():
-            print("[ERROR] No hay texto de usuario ni de Leo para evaluar.")
-            public_summary = "Error: No hay contenido para evaluar."
-            tip_text = "Asegúrate de hablar y de que el asistente Leo también responda."
-        else:
-            try:
-                summaries = evaluate_interaction(final_user_text, leo_dialogue)
-                public_summary = summaries.get("public", public_summary)
-                internal_summary = summaries.get("internal", internal_summary)
-            except Exception as e:
-                public_summary = "⚠️ Evaluación automática no disponible."
-                internal_summary = f"❌ Error en evaluación: {str(e)}"
-                print(f"[ERROR] Error calling evaluate_interaction: {e}")
-
-            try:
-                tip_completion = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": "Eres un coach médico empático y útil. Ofrece 2-3 consejos prácticos, claros y concretos sobre cómo mejorar las interacciones de un representante médico con doctores. Enfócate en el participante."},
-                        {"role": "user", "content": f"Basado en esta conversación:\n\nParticipante: {final_user_text}\nLeo: {leo_dialogue}\n\n¿Qué podría hacer mejor el participante la próxima vez? Ofrece consejos accionables y positivos."}
-                    ],
-                    temperature=0.7,
-                )
-                tip_text = tip_completion.choices[0].message.content.strip()
-            except Exception as e:
-                tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
-                print(f"[ERROR] Error generating personalized tip: {e}")
-
-        # --- VISUAL ANALYSIS (desde el archivo local) ---
-        if os.path.exists(local_mp4_path): # Usar el MP4 para el análisis visual si existe
-            try:
-                print(f"[VIDEO ANALYSIS] Starting posture analysis for: {local_mp4_path}")
-                video_stats = analyze_video_posture(local_mp4_path)
-                if video_stats["error"]:
-                    posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
-                elif video_stats['frames_total'] > 0:
-                    visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
-                    posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
-                else:
-                    posture_feedback = "No se pudieron analizar frames de video."
-                print(f"[POSTURA] {posture_feedback}")
-            except Exception as e:
-                posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
-                print(f"[ERROR] Unexpected error in visual analysis: {e}")
-        else:
-            print(f"[WARNING] Skipping visual analysis: Local MP4 file not found at {local_mp4_path}")
-            posture_feedback = "Video no disponible para análisis visual."
-
-        # --- Subir MP4 final a S3 ---
-        if os.path.exists(local_mp4_path):
-            final_video_s3_url = upload_file_to_s3(local_mp4_path, AWS_S3_BUCKET_NAME, mp4_object_key)
-            if not final_video_s3_url:
-                print(f"[ERROR] Falló la subida del MP4 final a S3: {local_mp4_path}")
-                return {"status": "error", "error": "Falló la subida del MP4 final a S3."}
-        else:
-            print(f"[WARNING] No se generó archivo MP4 local para subir a S3: {local_mp4_path}")
-            # Si no hay MP4, ¿qué URL guardamos? Podríamos usar la del WEBM original si no se borra.
-            # Por ahora, si no hay MP4, no guardamos URL de video final.
-            final_video_s3_url = None # No hay MP4 para subir
-
-    except Exception as general_error:
-        print(f"[CRITICAL ERROR] Unhandled error in process_session_video task: {general_error}")
-        return {"status": "error", "error": f"Internal server error during processing: {str(general_error)}"}
-    finally:
-        # --- Limpiar archivos temporales locales ---
-        for temp_file in [local_webm_path, local_mp4_path, temp_audio_path]:
-            if os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                    print(f"[CLEANUP] Archivo temporal eliminado: {temp_file}")
-                except Exception as e:
-                    print(f"[CLEANUP ERROR] Falló la eliminación del archivo temporal {temp_file}: {e}")
-
-    # --- Retornar resultados para que el Web Service los guarde en la DB ---
-    # La tarea ahora devuelve todos los datos relevantes, incluyendo la URL final del video en S3
-    return {
-        "status": "ok",
-        "evaluation": public_summary,
-        "tip": tip_text,
-        "visual_feedback": posture_feedback,
-        "final_video_url": final_video_s3_url, # URL del video MP4 en S3
-        "full_conversation_text": full_conversation_text,
-        "leo_dialogue": leo_dialogue,
-        "timestamp": timestamp,
-        "internal_summary": internal_summary,
-        "duration": duration,
-        "name": name, # Incluir para que el Web Service pueda identificar el registro
-        "email": email # Incluir para que el Web Service pueda identificar el registro
-    }
 
 
 # ----------------------
@@ -460,7 +307,8 @@ def select():
     if row[3] != token:
         return "Token inválido. Verifica con RH.", 403
 
-    start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    now = datetime.now()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     conn = sqlite3.connect(DB_PATH) # Re-open connection for this query
     c = conn.cursor()
     c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
@@ -585,6 +433,8 @@ def upload_video():
     row = c.fetchone()
     if row:
         # Update audio_path to point to the webm file. It will be converted/transcribed later.
+        # Note: audio_path here still stores the local webm filename, which is then
+        # replaced by the S3 URL inside the Celery task.
         c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (webm_filename, row[0]))
         conn.commit()
     conn.close()
@@ -601,169 +451,26 @@ def log_full_session():
     duration = int(data.get("duration", 0))
     video_filename = data.get("video_filename") # This is the original .webm filename
 
-    timestamp = datetime.now().isoformat()
-    transcribed_text = ""
-    public_summary = "Evaluación no disponible."
-    internal_summary = "Evaluación no disponible."
-    tip_text = "Consejo no disponible."
-    posture_feedback = "Análisis visual no realizado."
+    # Store necessary data for the Celery task
+    task_data = {
+        "name": name,
+        "email": email,
+        "scenario": scenario,
+        "conversation": conversation,
+        "duration": duration,
+        "video_object_key": video_filename # This should be the filename in S3 for the WEBM
+    }
 
-    if not video_filename:
-        print("[ERROR] log_full_session: No se recibió video_filename.")
-        return jsonify({"status": "error", "error": "No se recibió el nombre del archivo de video."}), 400
+    # Dispatch the processing to a Celery task asynchronously
+    task = celery_app.send_task('celery_worker.process_session_video', args=[task_data]) # Explicitly sending by name
 
-    original_webm_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
-    mp4_filepath = os.path.join(app.config['UPLOAD_FOLDER'], video_filename.replace('.webm', '.mp4'))
-    temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f"audio_from_{video_filename.split('.')[0]}.wav")
+    print(f"[CELERY] Task dispatched: {task.id} for user {email}")
 
-    # --- VIDEO CONVERSION AND AUDIO EXTRACTION ---
-    if not os.path.exists(original_webm_path):
-        print(f"[ERROR] Original WEBM video file not found: {original_webm_path}")
-        return jsonify({"status": "error", "error": f"Archivo de video WEBM no encontrado: {original_webm_path}"}), 400
-
-    print(f"[INFO] Processing video: {original_webm_path}")
-    if convert_webm_to_mp4(original_webm_path, mp4_filepath):
-        video_to_process_path = mp4_filepath
-        print(f"[INFO] Converted to MP4: {mp4_filepath}")
-    else:
-        video_to_process_path = original_webm_path # Try processing original if conversion fails
-        print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {original_webm_path}")
-
-    # --- TRANSCRIPTION (from video's audio) ---
-    if whisper_model:
-        try:
-            video_clip = VideoFileClip(video_to_process_path)
-            if video_clip.audio:
-                print("[INFO] Extracting audio from video...")
-                video_clip.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
-                transcription_result = whisper_model.transcribe(temp_audio_path)
-                transcribed_text = transcription_result.get("text", "").strip()
-                print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
-            else:
-                print("⚠️ El video no tiene pista de audio para transcribir.")
-        except Exception as e:
-            print(f"[ERROR] Error durante la extracción de audio o transcripción: {e}")
-            transcribed_text = "Error en transcripción."
-        finally:
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
-    else:
-        print("[WARNING] Whisper model not loaded, skipping audio transcription.")
-
-    # --- Prepare text for GPT evaluation ---
-    # Use the transcribed text primarily for the user's side if available,
-    # otherwise fall back to frontend conversation data.
-    # Note: D-ID agent might already provide accurate transcripts.
-    user_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
-    # Prioritize transcribed_text for user input if available and substantial
-    final_user_text = transcribed_text if transcribed_text.strip() else user_dialogue
-
-    leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'agent']) # D-ID agent usually uses 'agent' role
-    if not leo_dialogue: # Fallback if agent uses 'leo' role
-        leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
-
-    # Full conversation text for DB
-    full_conversation_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
-
-    print(f"[DEBUG] Final USER_TEXT for AI: {final_user_text[:100]}...")
-    print(f"[DEBUG] Final LEO_TEXT for AI: {leo_dialogue[:100]}...")
-
-    if not final_user_text.strip() and not leo_dialogue.strip():
-        print("[ERROR] No hay texto de usuario ni de Leo para evaluar. Verifica que el video tenga audio y que el frontend envíe la conversación.")
-        return jsonify({
-            "status": "error",
-            "evaluation": "No se encontró contenido válido para evaluar.",
-            "tip": "Asegúrate de hablar y de que el asistente Leo también responda durante la sesión."
-        }), 400
-
-    # --- AI EVALUATION (GPT) ---
-    try:
-        summaries = evaluate_interaction(final_user_text, leo_dialogue) # Use the specific texts
-        public_summary = summaries.get("public", public_summary)
-        internal_summary = summaries.get("internal", internal_summary)
-        print(f"[INFO] AI Evaluation successful. Public: {public_summary[:50]}...")
-    except Exception as e:
-        public_summary = "⚠️ Evaluación automática no disponible."
-        internal_summary = f"❌ Error en evaluación: {str(e)}"
-        print(f"[ERROR] Error calling evaluate_interaction: {e}")
-
-    # --- PERSONALIZED TIP (GPT) ---
-    try:
-        tip_completion = client.chat.completions.create(
-            model="gpt-4o", # Using gpt-4o for potentially better performance/cost
-            messages=[
-                {"role": "system", "content": "Eres un coach médico empático y útil. Ofrece 2-3 consejos prácticos, claros y concretos sobre cómo mejorar las interacciones de un representante médico con doctores. Enfócate en el participante."},
-                {"role": "user", "content": f"Basado en esta conversación:\n\nParticipante: {final_user_text}\nLeo: {leo_dialogue}\n\n¿Qué podría hacer mejor el participante la próxima vez? Ofrece consejos accionables y positivos."}
-            ],
-            temperature=0.7, # Slightly higher temperature for more creative advice
-        )
-        tip_text = tip_completion.choices[0].message.content.strip()
-        print(f"[INFO] AI Tip generated: {tip_text[:50]}...")
-    except Exception as e:
-        tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
-        print(f"[ERROR] Error generating personalized tip: {e}")
-
-    # --- VISUAL ANALYSIS ---
-    if video_to_process_path and os.path.exists(video_to_process_path):
-        try:
-            print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
-            video_stats = analyze_video_posture(video_to_process_path)
-            if video_stats["error"]:
-                posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
-            elif video_stats['frames_total'] > 0:
-                visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
-                posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
-            else:
-                posture_feedback = "No se pudieron analizar frames de video."
-            print(f"[POSTURA] {posture_feedback}")
-        except Exception as e:
-            posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
-            print(f"[ERROR] Unexpected error in visual analysis: {e}")
-    else:
-        print(f"[WARNING] Skipping visual analysis: Video file not found at {video_to_process_path}")
-        posture_feedback = "Video no disponible para análisis visual."
-
-    # --- SAVE TO DATABASE ---
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        c.execute("""INSERT INTO interactions (
-            name, email, scenario, message, response, timestamp,
-            evaluation, evaluation_rh, duration_seconds, tip,
-            audio_path, visual_feedback
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-            name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
-            public_summary, internal_summary, duration, tip_text,
-            video_filename, posture_feedback # Store the original webm filename
-        ))
-        conn.commit()
-        print(f"[DB] Interaction saved for {email}, scenario {scenario}.")
-    except Exception as e:
-        print(f"[ERROR] Database insert failed: {e}")
-        # Optionally, roll back if needed
-        # conn.rollback()
-        return jsonify({"status": "error", "error": f"Error al guardar en la base de datos: {str(e)}"}), 500
-    finally:
-        conn.close()
-
-    # --- Cleanup temporary files ---
-    try:
-        if os.path.exists(mp4_filepath):
-            os.remove(mp4_filepath)
-            print(f"Cleaned up {mp4_filepath}")
-        # Keep the original .webm for serving if needed, or remove it too
-        # if os.path.exists(original_webm_path):
-        #     os.remove(original_webm_path)
-        #     print(f"Cleaned up {original_webm_path}")
-    except Exception as e:
-        print(f"[CLEANUP ERROR] Failed to remove temp files: {e}")
-
-    # --- Return JSON Response to Frontend ---
+    # Return immediate response to frontend
     return jsonify({
-        "status": "ok",
-        "evaluation": public_summary,
-        "tip": tip_text,
-        "visual_feedback": posture_feedback # Send visual feedback to frontend too if needed
+        "status": "processing",
+        "message": "Tu sesión está siendo analizada. Puedes ver el progreso en tu Dashboard en unos minutos.",
+        "task_id": task.id
     })
 
 # ----------------------
@@ -771,10 +478,10 @@ def log_full_session():
 # ----------------------
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
-    print(f"DEBUG: Accediendo a /admin. Método HTTP: {request.method}") # <--- AÑADIR ESTA LÍNEA
+    print(f"DEBUG: Accediendo a /admin. Método HTTP: {request.method}")
 
     if not session.get("admin"):
-        print("DEBUG: No hay sesión de administrador, redirigiendo a /login") # <--- AÑADIR ESTA LÍNEA
+        print("DEBUG: No hay sesión de administrador, redirigiendo a /login")
         return redirect("/login")
 
     conn = sqlite3.connect(DB_PATH)
@@ -782,33 +489,33 @@ def admin_panel():
 
     # POST: user management
     if request.method == "POST":
-        print("DEBUG: Recibida solicitud POST en /admin") # <--- AÑADIR ESTA LÍNEA
+        print("DEBUG: Recibida solicitud POST en /admin")
         action = request.form.get("action")
-        print(f"DEBUG: Acción del formulario: {action}") # <--- AÑADIR ESTA LÍNEA
+        print(f"DEBUG: Acción del formulario: {action}")
         if action == "add":
-            print("DEBUG: Intentando añadir usuario") # <--- AÑADIR ESTA LÍNEA
+            print("DEBUG: Intentando añadir usuario")
             name = request.form["name"]
             email = request.form["email"]
             start = request.form["start_date"]
-            end = request.form["end_date"]
+            end = request.form["end_date"] # This was the missing name attribute fix
             token = secrets.token_hex(8) # Generate a new token
-            print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}") # <--- AÑADIR ESTA LÍNEA
-            try: # <--- AÑADIR ESTE BLOQUE TRY/EXCEPT
+            print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
+            try:
                 c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
                                    VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
                 conn.commit()
                 print(f"[ADMIN] Added/Updated user: {email}")
             except Exception as e:
-                print(f"ERROR: Falló al insertar usuario en DB: {e}") # <--- AÑADIR ESTA LÍNEA
+                print(f"ERROR: Falló al insertar usuario en DB: {e}")
                 conn.rollback()
-                return f"Error al guardar usuario: {str(e)}", 500 # <--- OPCIONAL: DEVOLVER EL ERROR PARA DEPURACIÓN
+                return f"Error al guardar usuario: {str(e)}", 500
         elif action == "toggle":
-            print("DEBUG: Intentando activar/desactivar usuario") # <--- AÑADIR ESTA LÍNEA
+            print("DEBUG: Intentando activar/desactivar usuario")
             user_id = int(request.form["user_id"])
             c.execute("UPDATE users SET active = 1 - active WHERE id = ?", (user_id,))
             print(f"[ADMIN] Toggled user active status: {user_id}")
         elif action == "regen_token":
-            print("DEBUG: Intentando regenerar token") # <--- AÑADIR ESTA LÍNEA
+            print("DEBUG: Intentando regenerar token")
             user_id = int(request.form["user_id"])
             new_token = secrets.token_hex(8)
             c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
@@ -940,5 +647,5 @@ def delete_session(session_id):
 def health_check():
     return "OK", 200
 
-# El bloque if __name__ == "__main__": ha sido eliminado para despliegue en Render con Gunicorn.
-# Gunicorn se encarga de iniciar la aplicación. 
+# The if __name__ == "__main__": block has been removed for deployment with Gunicorn.
+# Gunicorn is responsible for starting the application.
