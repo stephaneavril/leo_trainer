@@ -1,3 +1,4 @@
+# app.py
 import os
 import json
 import sqlite3
@@ -13,6 +14,7 @@ from celery import Celery
 from celery_worker import celery_app
 import openai
 import whisper
+import subprocess # Added for convert_webm_to_mp4 and analyze_video_posture, though these are now primarily in celery_worker.py
 
 # Importar boto3 para S3
 import boto3
@@ -414,22 +416,23 @@ def upload_video():
         
         print(f"[S3] Subido a: {s3_url}")
 
-        # Guardar nombre del video en sesión si otros endpoints lo usan
         session["last_video_filename"] = s3_key
 
-        # Lanzar tarea de procesamiento
-        celery_payload = {
-            "name": name,
-            "email": email,
-            "scenario": "Desconocido",
-            "duration": 0,
-            "conversation": [],
-            "video_object_key": s3_key
-        }
-        print("[DEBUG] Enviando a Celery:", celery_payload)
-        process_session_video.delay(celery_payload)
+        # REMOVED: Lanzar tarea de procesamiento here. It will be dispatched by log_full_session.
+        # from celery_worker import process_session_video
+        # celery_payload = {
+        #     "name": name,
+        #     "email": email,
+        #     "scenario": "Desconocido", # This is a placeholder, will be updated by log_full_session call
+        #     "duration": 0, # Placeholder, will be updated by log_full_session call
+        #     "conversation": [], # Placeholder, will be updated by log_full_session call
+        #     "video_object_key": s3_key
+        # }
+        # print("[DEBUG] Enviando a Celery:", celery_payload)
+        # process_session_video.delay(celery_payload)
 
-        return jsonify({'status': 'ok', 'video_url': s3_url})
+
+        return jsonify({'status': 'ok', 'video_url': s3_url, 's3_object_key': s3_key}) # ADD s3_object_key
     except Exception as e:
         print(f"[ERROR] upload_video: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500

@@ -305,11 +305,11 @@
           try {
             const videoRes = await fetch('/upload_video', { method: 'POST', body: formData });
             videoData = await videoRes.json();
-            if (!videoData.status || videoData.status !== 'saved') {
-              console.error("Backend did not confirm video saved:", videoData);
-              alert("⚠️ Problema al subir el video. Consulta la consola para más detalles.");
+            if (videoData.status === 'ok' && videoData.s3_object_key) { // CHECK for s3_object_key
+              console.log("Video uploaded successfully. S3 object key:", videoData.s3_object_key);
             } else {
-              console.log("Video uploaded successfully:", videoData.path);
+              console.error("Backend did not confirm video saved or s3_object_key missing:", videoData);
+              alert("⚠️ Problema al subir el video. Consulta la consola para más detalles.");
             }
           } catch (error) {
             console.error("Error uploading video:", error);
@@ -335,7 +335,7 @@
               scenario,
               conversation: [], // Sending an empty array as D-ID conversation is not captured
               duration,
-              video_filename: videoData?.path || null
+              video_filename: videoData?.s3_object_key || null // Use s3_object_key from previous response
             })
           });
           sessionData = await sessionRes.json();

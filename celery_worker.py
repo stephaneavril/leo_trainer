@@ -273,11 +273,19 @@ def process_session_video(data):
 
         print(f"[INFO] Processing local video: {local_webm_path}")
         if convert_webm_to_mp4(local_webm_path, local_mp4_path):
-            video_to_process_path = local_mp4_path
-            print(f"[INFO] Converted to local MP4: {local_mp4_path}")
-        else:
-            video_to_process_path = local_webm_path
-            print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
+    # Comprimir MP4 para reducir su tamaño antes de continuar
+    compressed_path = local_mp4_path.replace(".mp4", "_compressed.mp4")
+    if compress_video_for_ai(local_mp4_path, compressed_path):
+        video_to_process_path = compressed_path
+        print(f"[INFO] Compressed video ready: {compressed_path}")
+    else:
+        video_to_process_path = local_mp4_path
+        print(f"[WARNING] Compression failed. Using uncompressed video: {local_mp4_path}")
+
+    print(f"[INFO] Converted to local MP4: {local_mp4_path}")
+ else:
+    video_to_process_path = local_webm_path
+    print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
 
         video_clip = None
         try:
@@ -456,3 +464,20 @@ def process_session_video(data):
         "name": name,
         "email": email
     }
+
+def compress_video_for_ai(input_path, output_path):
+    try:
+        command = [
+            "ffmpeg", "-i", input_path,
+            "-vf", "scale=160:120,format=gray",
+            "-c:v", "libx264", "-crf", "32", "-preset", "veryfast",
+            "-c:a", "aac", "-b:a", "32k", "-ac", "1",
+            "-y",  # overwrite
+            output_path
+        ]
+        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        print(f"[COMPRESS] Video reducido: {output_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] compress_video_for_ai: {e.stderr.decode()}")
+        return False

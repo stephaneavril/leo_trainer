@@ -33,9 +33,7 @@ static/audios/
 static/audio/*
 static/uploads/
 static/uploads/*
-*.webm
-*.mp4
-*.wav
+
 
 # VS Code
 .vscode/
