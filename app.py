@@ -411,14 +411,19 @@ def upload_video():
         s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key)
         if not s3_url:
             raise Exception("No se pudo subir el archivo a S3.")
+        
+        print(f"[S3] Subido a: {s3_url}")
+
+        # Guardar nombre del video en sesión si otros endpoints lo usan
+        session["last_video_filename"] = s3_key
 
         # Lanzar tarea de procesamiento
         celery_payload = {
             "name": name,
             "email": email,
-            "scenario": "Desconocido",  # puedes extraerlo del formulario si lo agregas
+            "scenario": "Desconocido",
             "duration": 0,
-            "conversation": [],  # Si no capturas conversación, déjalo vacío
+            "conversation": [],
             "video_object_key": s3_key
         }
         process_session_video.delay(celery_payload)

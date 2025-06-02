@@ -23,4 +23,4 @@ COPY . .
 EXPOSE 10000
 
 # Iniciar la aplicación
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
