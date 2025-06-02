@@ -562,7 +562,10 @@ def serve_video(filename):
 # ----------------------
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
+    print(f"DEBUG: Accediendo a /admin. Método HTTP: {request.method}") # <--- AÑADIR ESTA LÍNEA
+
     if not session.get("admin"):
+        print("DEBUG: No hay sesión de administrador, redirigiendo a /login") # <--- AÑADIR ESTA LÍNEA
         return redirect("/login")
 
     conn = sqlite3.connect(DB_PATH)
@@ -570,24 +573,36 @@ def admin_panel():
 
     # POST: user management
     if request.method == "POST":
+        print("DEBUG: Recibida solicitud POST en /admin") # <--- AÑADIR ESTA LÍNEA
         action = request.form.get("action")
+        print(f"DEBUG: Acción del formulario: {action}") # <--- AÑADIR ESTA LÍNEA
         if action == "add":
+            print("DEBUG: Intentando añadir usuario") # <--- AÑADIR ESTA LÍNEA
             name = request.form["name"]
             email = request.form["email"]
             start = request.form["start_date"]
             end = request.form["end_date"]
             token = secrets.token_hex(8) # Generate a new token
-            c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
-                               VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
-            print(f"[ADMIN] Added/Updated user: {email}")
+            print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}") # <--- AÑADIR ESTA LÍNEA
+            try: # <--- AÑADIR ESTE BLOQUE TRY/EXCEPT
+                c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
+                                   VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
+                conn.commit()
+                print(f"[ADMIN] Added/Updated user: {email}")
+            except Exception as e:
+                print(f"ERROR: Falló al insertar usuario en DB: {e}") # <--- AÑADIR ESTA LÍNEA
+                conn.rollback()
+                return f"Error al guardar usuario: {str(e)}", 500 # <--- OPCIONAL: DEVOLVER EL ERROR PARA DEPURACIÓN
         elif action == "toggle":
+            print("DEBUG: Intentando activar/desactivar usuario") # <--- AÑADIR ESTA LÍNEA
             user_id = int(request.form["user_id"])
             c.execute("UPDATE users SET active = 1 - active WHERE id = ?", (user_id,))
             print(f"[ADMIN] Toggled user active status: {user_id}")
         elif action == "regen_token":
+            print("DEBUG: Intentando regenerar token") # <--- AÑADIR ESTA LÍNEA
             user_id = int(request.form["user_id"])
             new_token = secrets.token_hex(8)
-            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id)) # Corrected 'user_id' to 'new_token'
+            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
             print(f"[ADMIN] Regenerated token for user: {user_id}")
         conn.commit()
 
