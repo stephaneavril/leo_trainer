@@ -426,6 +426,7 @@ def upload_video():
             "conversation": [],
             "video_object_key": s3_key
         }
+        print("[DEBUG] Enviando a Celery:", celery_payload)
         process_session_video.delay(celery_payload)
 
         return jsonify({'status': 'ok', 'video_url': s3_url})
