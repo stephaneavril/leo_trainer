@@ -384,7 +384,7 @@ def process_session_video(data):
     # --- Retornar resultados para que el Web Service los guarde en la DB ---
     # La tarea ahora devuelve todos los datos relevantes, incluyendo la URL final del video en S3
     return {
-        "status": "ok" if db_status == "ok" else "error",
+        "status": "ok",
         "evaluation": public_summary,
         "tip": tip_text,
         "visual_feedback": posture_feedback,
@@ -508,10 +508,10 @@ def get_task_status(task_id):
             ))
             conn.commit()
             print(f"[DB] Interaction saved for {result_data.get('email')}, scenario {result_data.get('scenario')}.")
-            db_status = "ok"
+            db_save_status = "ok" # Changed db_status to db_save_status to avoid conflict
         except Exception as e:
             print(f"[ERROR] Database insert failed from task_status: {e}")
-            db_status = "error"
+            db_save_status = "error" # Changed db_status to db_save_status to avoid conflict
         finally:
             conn.close()
 
@@ -522,7 +522,7 @@ def get_task_status(task_id):
                 "tip": result_data.get("tip"),
                 "visual_feedback": result_data.get("visual_feedback"),
                 "final_video_url": result_data.get("final_video_url"),
-                "db_save_status": db_status
+                "db_save_status": db_save_status # Changed db_status to db_save_status to avoid conflict
             }
         }
     elif task.state == 'FAILURE':
@@ -583,8 +583,7 @@ def admin_panel():
         elif action == "regen_token":
             user_id = int(request.form["user_id"])
             new_token = secrets.token_hex(8)
-            # FIX: new_id was not defined, should be new_token
-            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
+            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id)) # Corrected 'user_id' to 'new_token'
             print(f"[ADMIN] Regenerated token for user: {user_id}")
         conn.commit()
 
@@ -713,7 +712,5 @@ def delete_session(session_id):
 def health_check():
     return "OK", 200
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    # In production, set debug=False and use a production WSGI server like Gunicorn
-    app.run(host="0.0.0.0", port=port, debug=True)
+# El bloque if __name__ == "__main__": ha sido eliminado para despliegue en Render con Gunicorn.
+# Gunicorn se encarga de iniciar la aplicación.
