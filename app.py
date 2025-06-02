@@ -347,9 +347,11 @@ def dashboard():
     name = request.form.get("name") or session.get("name")
     email = request.form.get("email") or session.get("email")
     token = request.form.get("token") or session.get("token") # Try form first, then session
+    print(f"DEBUG: Dashboard access - Name: {name}, Email: {email}, Token: {token}") # ADD THIS LINE
     today = date.today().isoformat()
 
     if not name or not email or not token:
+        print(f"DEBUG: Redirecting to index. Missing data: Name={name}, Email={email}, Token={token}") # ADD THIS LINE
         return redirect(url_for('index')) # Redirect if session data is missing
 
     conn = sqlite3.connect(DB_PATH)

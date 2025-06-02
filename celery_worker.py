@@ -40,7 +40,7 @@ s3_client = boto3.client(
 
 try:
     import whisper
-    whisper_model = whisper.load_model("base")
+    whisper_model = whisper.load_model("tiny")
     print("\U0001F3A7 Whisper model loaded successfully in Celery worker.")
 except Exception as e:
     print(f"\U0001F525 Error loading Whisper model in Celery worker: {e}")
