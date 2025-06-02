@@ -1,27 +1,24 @@
 # celery_worker.py
+
 import os
 import sqlite3
-from datetime import datetime, date # Import date for patching users table
+from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
 
-# Imports for video processing and AI evaluation, now in the worker
 from evaluator import evaluate_interaction
 from moviepy.editor import VideoFileClip
 import cv2
 import mediapipe as mp
 import subprocess
 import json
-import secrets # Added for token generation in user patching
+import secrets
 
-# Import boto3 for S3 operations, as the worker will now manage S3 uploads/downloads
 import boto3
 from botocore.exceptions import ClientError
 
 load_dotenv()
 
-# --- Configuration for Database and AWS S3 (duplicated from app.py for worker self-sufficiency) ---
-# IMPORTANT: Ensure these match your app.py and environment variables
 PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data")
 TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing")
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
@@ -41,7 +38,6 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
-# Load Whisper model once when the worker starts
 try:
     import whisper
     whisper_model = whisper.load_model("base")
@@ -50,8 +46,6 @@ except Exception as e:
     print(f"\U0001F525 Error loading Whisper model in Celery worker: {e}")
     whisper_model = None
 
-
-# Replace with your Render Redis internal URL
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6378/0")
 
 celery_app = Celery(
@@ -71,9 +65,6 @@ celery_app.conf.update(
     enable_utc=False,
 )
 
-# ----------------------
-# DB Init & Schema Patching (COPIED FROM APP.PY)
-# ----------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -109,46 +100,34 @@ def patch_db_schema():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # Check and add 'evaluation_rh' if not exists
     c.execute("PRAGMA table_info(interactions)")
     columns = [col[1] for col in c.fetchall()]
     if 'evaluation_rh' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
         print("Added 'evaluation_rh' to interactions table in worker.")
 
-    # Check and add 'tip' if not exists
     if 'tip' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
         print("Added 'tip' to interactions table in worker.")
 
-    # Check and add 'visual_feedback' if not exists
     if 'visual_feedback' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
         print("Added 'visual_feedback' to interactions table in worker.")
 
-    # Check and add 'token' to users table if not exists
     c.execute("PRAGMA table_info(users)")
     user_columns = [col[1] for col in c.fetchall()]
     if 'token' not in user_columns:
         c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
         print("Added 'token' to users table in worker.")
-        # Optionally, generate tokens for existing users if needed:
-        # c.execute("UPDATE users SET token = substr(hex(randomblob(8)), 1, 16) WHERE token IS NULL")
 
     conn.commit()
     conn.close()
     print("\U0001F527 Database schema patched in worker.")
 
-# Initialize and patch DB on worker startup
 init_db()
 patch_db_schema()
 
-# ----------------------
-# Helper Functions (moved from app.py, now part of worker's scope)
-# ----------------------
-# Función para subir archivo a S3
 def upload_file_to_s3(file_path, bucket, object_name=None):
-    """Sube un archivo a un bucket de S3"""
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
@@ -159,9 +138,7 @@ def upload_file_to_s3(file_path, bucket, object_name=None):
         print(f"[S3 ERROR] Falló la subida a S3: {e}")
         return None
 
-# Función para descargar archivo de S3
 def download_file_from_s3(bucket, object_name, file_path):
-    """Descarga un archivo de un bucket de S3"""
     try:
         s3_client.download_file(bucket, object_name, file_path)
         print(f"[S3 DOWNLOAD] Archivo s3://{bucket}/{object_name} descargado a {file_path}")
@@ -171,13 +148,12 @@ def download_file_from_s3(bucket, object_name, file_path):
         return False
 
 def convert_webm_to_mp4(input_path, output_path):
-    """Converts a .webm video to .mp4 using ffmpeg."""
     try:
         command = [
             "ffmpeg", "-i", input_path,
             "-c:v", "libx264", "-preset", "medium", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
-            "-strict", "experimental", "-y", # -y to overwrite output files
+            "-strict", "experimental", "-y",
             output_path
         ]
         result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
@@ -194,7 +170,6 @@ def convert_webm_to_mp4(input_path, output_path):
         return False
 
 def analyze_video_posture(video_path):
-    """Analyzes video for face detection as a proxy for posture/presence."""
     mp_face = mp.solutions.face_detection
     summary = {"frames_total": 0, "face_detected_frames": 0, "error": None}
     try:
@@ -228,17 +203,29 @@ def analyze_video_posture(video_path):
         print(f"[ERROR] Error during video posture analysis: {e}")
     return summary
 
+def compress_video_for_ai(input_path, output_path):
+    try:
+        command = [
+            "ffmpeg", "-i", input_path,
+            "-vf", "scale=160:120,format=gray",
+            "-c:v", "libx264", "-crf", "32", "-preset", "veryfast",
+            "-c:a", "aac", "-b:a", "32k", "-ac", "1",
+            "-y",   # overwrite
+            output_path
+        ]
+        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        print(f"[COMPRESS] Video reducido: {output_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] compress_video_for_ai: {e.stderr.decode()}")
+        return False
 
-# ----------------------
-# Celery Task
-# ----------------------
 @celery_app.task
 def process_session_video(data):
     name = data.get("name")
     email = data.get("email")
     scenario = data.get("scenario")
-    # conversation is passed as empty array from frontend now, as D-ID events are not captured
-    conversation = data.get("conversation", []) 
+    conversation = data.get("conversation", [])
     duration = int(data.get("duration", 0))
     video_object_key = data.get("video_object_key")
 
@@ -263,8 +250,8 @@ def process_session_video(data):
             local_webm_path = None
             final_video_s3_url = "Video_Not_Available_Error"
     
-    local_mp4_path = None # Initialize outside if block
-    temp_audio_path = None # Initialize outside if block
+    local_mp4_path = None
+    temp_audio_path = None
 
     if local_webm_path:
         mp4_object_key = video_object_key.replace('.webm', '.mp4')
@@ -273,19 +260,21 @@ def process_session_video(data):
 
         print(f"[INFO] Processing local video: {local_webm_path}")
         if convert_webm_to_mp4(local_webm_path, local_mp4_path):
-    # Comprimir MP4 para reducir su tamaño antes de continuar
-    compressed_path = local_mp4_path.replace(".mp4", "_compressed.mp4")
-    if compress_video_for_ai(local_mp4_path, compressed_path):
-        video_to_process_path = compressed_path
-        print(f"[INFO] Compressed video ready: {compressed_path}")
-    else:
-        video_to_process_path = local_mp4_path
-        print(f"[WARNING] Compression failed. Using uncompressed video: {local_mp4_path}")
+            video_to_process_path = local_mp4_path # Default to uncompressed MP4
+            print(f"[INFO] Converted to local MP4: {local_mp4_path}")
 
-    print(f"[INFO] Converted to local MP4: {local_mp4_path}")
- else:
-    video_to_process_path = local_webm_path
-    print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
+            # Comprimir MP4 para reducir su tamaño antes de continuar
+            compressed_path = local_mp4_path.replace(".mp4", "_compressed.mp4")
+            if compress_video_for_ai(local_mp4_path, compressed_path):
+                video_to_process_path = compressed_path # Use compressed path if successful
+                print(f"[INFO] Compressed video ready: {compressed_path}")
+            else:
+                # If compression fails, video_to_process_path remains local_mp4_path (uncompressed MP4)
+                print(f"[WARNING] Compression failed. Using uncompressed MP4: {local_mp4_path}")
+
+        else: # This 'else' correctly aligns with the 'if convert_webm_to_mp4' statement
+            video_to_process_path = local_webm_path # Fallback to original WEBM
+            print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
 
         video_clip = None
         try:
@@ -310,10 +299,10 @@ def process_session_video(data):
                 print("[WARNING] Whisper model not loaded, skipping audio transcription.")
 
             # --- VISUAL ANALYSIS ---
-            if local_mp4_path and os.path.exists(local_mp4_path):
+            if video_to_process_path and os.path.exists(video_to_process_path):
                 try:
-                    print(f"[VIDEO ANALYSIS] Starting posture analysis for: {local_mp4_path}")
-                    video_stats = analyze_video_posture(local_mp4_path)
+                    print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
+                    video_stats = analyze_video_posture(video_to_process_path)
                     if video_stats["error"]:
                         posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
                     elif video_stats['frames_total'] > 0:
@@ -326,7 +315,7 @@ def process_session_video(data):
                     posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
                     print(f"[ERROR] Unexpected error in visual analysis: {e}")
             else:
-                print(f"[WARNING] Skipping visual analysis: Local MP4 file not found at {local_mp4_path}")
+                print(f"[WARNING] Skipping visual analysis: Processed video file not found at {video_to_process_path}")
                 posture_feedback = "Video no disponible para análisis visual."
 
             # --- Subir MP4 final a S3 ---
@@ -349,29 +338,19 @@ def process_session_video(data):
         posture_feedback = "Análisis visual no realizado (video faltante)."
         final_video_s3_url = "Video_Missing_Error"
 
-
-    # --- AI Evaluation (GPT) y Personalized Tip (GPT) ---
-    # Now, final_user_text relies SOLELY on Whisper transcription.
-    # leo_dialogue will be an empty string or placeholder as D-ID agent speech is not captured.
-    final_user_text = transcribed_text # User speech comes from Whisper transcription of their video
-    leo_dialogue = "" # Explicitly empty as D-ID agent speech is not needed for AI context
+    final_user_text = transcribed_text
+    leo_dialogue = ""
     
-    # full_conversation_text can still be used for logging the raw conversation,
-    # but we'll use a placeholder for Leo's side if it's not explicitly captured.
-    # Since 'conversation' is empty, full_conversation_text will also be empty or contain only user speech
-    # if it was ever manually added outside D-ID events. For now, it will be empty.
     full_conversation_text = f"Participante: {final_user_text}\nLeo: (No se capturó el diálogo del agente D-ID)"
 
-
-    if not final_user_text.strip(): # Check only final_user_text as leo_dialogue is now intentionally empty
+    if not final_user_text.strip():
         print("[ERROR] No hay texto de usuario para evaluar (transcripción de Whisper vacía).")
         public_summary = "Error: No hay contenido de usuario para evaluar."
         internal_summary = json.dumps({"error": "No hay contenido de usuario para evaluar."})
         tip_text = "Asegúrate de que tu micrófono funcione y hables claramente durante la sesión."
     else:
         try:
-            # Pass final_user_text and an empty string for leo_dialogue to evaluator
-            summaries = evaluate_interaction(final_user_text, leo_dialogue, local_mp4_path if local_mp4_path and os.path.exists(local_mp4_path) else None)
+            summaries = evaluate_interaction(final_user_text, leo_dialogue, video_to_process_path if video_to_process_path and os.path.exists(video_to_process_path) else None)
             public_summary = summaries.get("public", public_summary)
             internal_summary = summaries.get("internal", internal_summary)
             if "error" in summaries.get("internal", {}):
@@ -386,7 +365,6 @@ def process_session_video(data):
         try:
             from openai import OpenAI
             openai_client_for_tip = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            # Generate tip based ONLY on user's performance and a generic "Leo's role"
             tip_completion = openai_client_for_tip.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -401,7 +379,6 @@ def process_session_video(data):
             tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
             print(f"[ERROR] Error generating personalized tip: {e}")
 
-    # --- SAVE TO DATABASE ---
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -415,7 +392,7 @@ def process_session_video(data):
                 evaluation = ?, evaluation_rh = ?, duration_seconds = ?,
                 tip = ?, visual_feedback = ?, audio_path = ?
                 WHERE id = ?""", (
-                name, email, scenario, full_conversation_text, leo_dialogue, timestamp, # leo_dialogue is empty now
+                name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
                 public_summary, internal_summary, duration, tip_text,
                 posture_feedback, final_video_s3_url, interaction_id
             ))
@@ -440,8 +417,11 @@ def process_session_video(data):
     finally:
         conn.close()
 
-    # --- Clean up temporary local files ---
-    temp_files_to_clean = [local_webm_path, local_mp4_path, temp_audio_path] if local_webm_path else []
+    temp_files_to_clean = [local_webm_path, local_mp4_path, temp_audio_path]
+    # Add compressed_path to cleanup if it was created
+    if 'compressed_path' in locals() and compressed_path and os.path.exists(compressed_path):
+        temp_files_to_clean.append(compressed_path)
+
     for temp_file in temp_files_to_clean:
         if temp_file and os.path.exists(temp_file):
             try:
@@ -464,20 +444,3 @@ def process_session_video(data):
         "name": name,
         "email": email
     }
-
-def compress_video_for_ai(input_path, output_path):
-    try:
-        command = [
-            "ffmpeg", "-i", input_path,
-            "-vf", "scale=160:120,format=gray",
-            "-c:v", "libx264", "-crf", "32", "-preset", "veryfast",
-            "-c:a", "aac", "-b:a", "32k", "-ac", "1",
-            "-y",  # overwrite
-            output_path
-        ]
-        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
-        print(f"[COMPRESS] Video reducido: {output_path}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[ERROR] compress_video_for_ai: {e.stderr.decode()}")
-        return False
