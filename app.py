@@ -15,9 +15,9 @@ import cv2
 import mediapipe as mp
 import subprocess # For ffmpeg
 import secrets # For token generation
-import json
-from celery import Celery
-from celery_worker import celery_app
+import json # <-- Asegúrate de que esta línea esté presente
+from celery import Celery # <-- Asegúrate de que esta línea esté presente
+from celery_worker import celery_app # <-- Asegúrate de que esta línea esté presente
 
 # Importar boto3 para S3
 import boto3
@@ -54,8 +54,9 @@ except Exception as e:
 
 # --- Configuration (Carpeta temporal local para procesamiento) ---
 # Esta carpeta será usada solo para archivos temporales mientras se procesan.
-# No será el almacenamiento permanente.
-TEMP_PROCESSING_FOLDER = "/tmp/leo_trainer_processing/"
+# DEBE SER PERSISTENTE EN RENDER.
+PERSISTENT_DISK_MOUNT_PATH = "/var/data" # Your Render persistent disk mount path
+TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") # Use a subfolder on the persistent disk
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
 # Obtener la ruta del directorio actual donde se ejecuta app.py
@@ -71,6 +72,17 @@ app = Flask(
 )
 CORS(app) # Enable CORS for frontend communication
 
+@app.before_request # <--- AÑADIR ESTE BLOQUE COMPLETO
+def log_request_info():
+    print(f"DEBUG_HOOK: Request received: {request.method} {request.path}")
+    if request.method == 'POST':
+        print(f"DEBUG_HOOK: Form data: {request.form}")
+        print(f"DEBUG_HOOK: Files: {request.files}")
+        try:
+            print(f"DEBUG_HOOK: JSON data: {request.json}")
+        except Exception:
+            print("DEBUG_HOOK: No JSON data or invalid JSON")
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -81,9 +93,8 @@ app.config['UPLOAD_FOLDER'] = TEMP_PROCESSING_FOLDER
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") # Use a strong, unique key in .env
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") # Change this for production!
 
-# DB_PATH ahora debe estar en un disco persistente o en PostgreSQL.
-# Por ahora, lo mantenemos como SQLite local, pero recuerda que esto es un punto débil.
-DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db") # Mover a /tmp para evitar problemas de escritura si no hay disco
+# DB_PATH ahora estará en el disco persistente
+DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 
@@ -404,8 +415,142 @@ def process_session_video(data):
 
 
 # ----------------------
-# Rutas de la Aplicación (ahora interactúan con S3 y Celery)
+# Auth Routes
 # ----------------------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form["password"] == ADMIN_PASSWORD:
+            session["admin"] = True
+            return redirect("/admin")
+        return "Contraseña incorrecta", 403
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+# ----------------------
+# User Session Routes
+# ----------------------
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/select", methods=["POST"])
+def select():
+    name = request.form["name"]
+    email = request.form["email"]
+    token = request.form["token"]
+    today = date.today().isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT active, start_date, end_date, token FROM users WHERE email=?", (email,))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        return "Usuario no registrado. Contacta a RH.", 403
+    if not row[0]:
+        return "Usuario inactivo. Contacta a RH.", 403
+    if not (row[1] <= today <= row[2]):
+        return "Acceso fuera de rango permitido.", 403
+    if row[3] != token:
+        return "Token inválido. Verifica con RH.", 403
+
+    start_of_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    conn = sqlite3.connect(DB_PATH) # Re-open connection for this query
+    c = conn.cursor()
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    used_seconds = c.fetchone()[0] or 0
+    conn.close()
+
+    if used_seconds >= 1800: # 30 minutes limit
+        return "Has alcanzado el límite mensual de uso (30 minutos).", 403
+
+    # Store user info in session for subsequent requests (chat, dashboard)
+    session["name"] = name
+    session["email"] = email
+    session["token"] = token # Store token for dashboard validation
+
+    return render_template("selector.html", name=name, email=email)
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    # Retrieve user info from session or form
+    name = request.form.get("name") or session.get("name")
+    email = request.form.get("email") or session.get("email")
+    scenario = request.form["scenario"] if "scenario" in request.form else session.get("scenario")
+
+    if not name or not email or not scenario:
+        # If any essential data is missing, redirect to index or login
+        return redirect(url_for('index'))
+
+    # Update session with current scenario if it came from form
+    session["scenario"] = scenario
+
+    now = datetime.now()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    used_seconds = c.fetchone()[0] or 0
+    conn.close()
+
+    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds)
+
+@app.route("/dashboard", methods=["GET", "POST"]) # Allow GET for direct access from end_session
+def dashboard():
+    name = request.form.get("name") or session.get("name")
+    email = request.form.get("email") or session.get("email")
+    token = request.form.get("token") or session.get("token") # Try form first, then session
+    today = date.today().isoformat()
+
+    if not name or not email or not token:
+        return redirect(url_for('index')) # Redirect if session data is missing
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT start_date, end_date, active, token FROM users WHERE email = ?", (email,))
+    row = c.fetchone()
+    conn.close() # Close connection after fetch
+
+    if not row:
+        return "Usuario no registrado. Contacta a RH.", 403
+    if not row[2]: # active status
+        return "Usuario inactivo. Contacta a RH.", 403
+    if not (row[0] <= today <= row[1]):
+        return "Acceso fuera de rango permitido.", 403
+    if row[3] != token:
+        return "Token inválido. Verifica con RH.", 403
+
+    now = datetime.now()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    conn = sqlite3.connect(DB_PATH) # Re-open for this query
+    c = conn.cursor()
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    used_seconds = c.fetchone()[0] or 0
+    max_seconds = 1800 # 30 minutes limit
+
+    # Re-fetch records using the proper columns (including 'tip' and 'visual_feedback')
+    c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip, visual_feedback FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
+    records = c.fetchall()
+    conn.close()
+
+    if used_seconds >= max_seconds and request.method == "POST": # Only block POST if limit reached
+        # If coming from chat, it might already be at limit, allow dashboard view but no new sessions
+        pass # Allow viewing dashboard even if limit is reached. The 'chat' route will block new sessions.
+
+    return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds)
+
+@app.route("/video/<path:filename>") # Cambiar a path para manejar URLs completas si es necesario
+def serve_video(filename):
+    # Opción 1: Redirigir directamente a la URL de S3 (más eficiente)
+    s3_video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{filename}"
+    print(f"[SERVE VIDEO] Redirigiendo a S3: {s3_video_url}")
+    return redirect(s3_video_url, code=302) # Redirección temporal
 
 @app.route("/upload_video", methods=["POST"])
 def upload_video():
@@ -415,147 +560,211 @@ def upload_video():
 
     if not file:
         return jsonify({"error": "No se envió ningún archivo de video."}), 400
+
     if file.filename == '':
         return jsonify({"error": "Nombre de archivo vacío."}), 400
 
+    # Create a unique filename for the webm
     timestamp_str = datetime.now().strftime('%Y%m%d%H%M%S')
-    # El nombre del objeto en S3 (clave del objeto)
-    webm_object_key = secure_filename(f"{name}_{email}_{timestamp_str}.webm")
+    webm_filename = secure_filename(f"{name}_{email}_{timestamp_str}.webm")
+    webm_filepath = os.path.join(app.config['UPLOAD_FOLDER'], webm_filename)
+    file.save(webm_filepath)
+    print(f"[UPLOAD] Video WEBM guardado en: {webm_filepath}")
 
-    # Guardar el archivo temporalmente en el sistema de archivos local del Web Service
-    # antes de subirlo a S3. Esta es una carpeta temporal /tmp.
-    local_temp_filepath = os.path.join(app.config['UPLOAD_FOLDER'], webm_object_key)
-    try:
-        file.save(local_temp_filepath)
-        print(f"[UPLOAD LOCAL] Video WEBM guardado temporalmente en: {local_temp_filepath}")
-    except Exception as e:
-        print(f"[ERROR] Falló el guardado local temporal del video: {e}")
-        return jsonify({"status": "error", "error": f"Error al guardar el video temporalmente: {str(e)}"}), 500
+    # Store the filename in session to link with log_full_session later
+    session["last_video_filename"] = webm_filename
 
-    # Subir el archivo WEBM a S3 inmediatamente
-    s3_url = upload_file_to_s3(local_temp_filepath, AWS_S3_BUCKET_NAME, webm_object_key)
+    # Optionally, update last interaction to include video path if an entry already exists
+    # This might be redundant if log_full_session is always called after upload_video
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Attempt to find a recent interaction for this user/scenario to update it
+    # This assumes 'upload_video' happens very close to an interaction start.
+    # A more robust solution might pass an interaction_id from frontend.
+    c.execute("SELECT id FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
+    row = c.fetchone()
+    if row:
+        # Update audio_path to point to the webm file. It will be converted/transcribed later.
+        c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (webm_filename, row[0]))
+        conn.commit()
+    conn.close()
 
-    # Limpiar el archivo temporal local después de subir a S3
-    try:
-        if os.path.exists(local_temp_filepath):
-            os.remove(local_temp_filepath)
-            print(f"[CLEANUP LOCAL] Archivo temporal local eliminado: {local_temp_filepath}")
-    except Exception as e:
-        print(f"[CLEANUP ERROR] Falló la eliminación del archivo temporal local {local_temp_filepath}: {e}")
-
-    if not s3_url:
-        return jsonify({"status": "error", "error": "Falló la subida del video a S3."}), 500
-
-    # Retornar la clave del objeto S3 (el nombre del archivo en S3)
-    return jsonify({"status": "saved", "path": webm_object_key})
-
+    return jsonify({"status": "saved", "path": webm_filepath})
 
 @app.route("/log_full_session", methods=["POST"])
-def log_full_session_api():
+def log_full_session():
     data = request.get_json()
-    # video_object_key es el nombre del archivo en S3 que se subió en /upload_video
-    video_object_key = data.get("video_filename") # Renombrado para claridad
+    name = data.get("name")
+    email = data.get("email")
+    scenario = data.get("scenario")
+    conversation = data.get("conversation", [])
+    duration = int(data.get("duration", 0))
+    video_filename = data.get("video_filename") # This is the original .webm filename
 
-    if not video_object_key:
-        return jsonify({"status": "error", "error": "No se recibió el nombre del objeto de video de S3."}), 400
+    timestamp = datetime.now().isoformat()
+    transcribed_text = ""
+    public_summary = "Evaluación no disponible."
+    internal_summary = "Evaluación no disponible."
+    tip_text = "Consejo no disponible."
+    posture_feedback = "Análisis visual no realizado."
 
-    # Enqueue the task (la tarea ahora recibe la clave del objeto S3)
-    task_data = {
-        "name": data.get("name"),
-        "email": data.get("email"),
-        "scenario": data.get("scenario"),
-        "conversation": data.get("conversation", []),
-        "duration": int(data.get("duration", 0)),
-        "video_object_key": video_object_key # Pasar la clave del objeto S3
-    }
-    task = process_session_video.apply_async(args=[task_data])
-    print(f"[INFO] Task enqueued with ID: {task.id}")
+    if not video_filename:
+        print("[ERROR] log_full_session: No se recibió video_filename.")
+        return jsonify({"status": "error", "error": "No se recibió el nombre del archivo de video."}), 400
 
-    return jsonify({
-        "status": "processing",
-        "task_id": task.id,
-        "message": "Sesión registrada, evaluación en progreso."
-    })
+    original_webm_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+    mp4_filepath = os.path.join(app.config['UPLOAD_FOLDER'], video_filename.replace('.webm', '.mp4'))
+    temp_audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f"audio_from_{video_filename.split('.')[0]}.wav")
 
+    # --- VIDEO CONVERSION AND AUDIO EXTRACTION ---
+    if not os.path.exists(original_webm_path):
+        print(f"[ERROR] Original WEBM video file not found: {original_webm_path}")
+        return jsonify({"status": "error", "error": f"Archivo de video WEBM no encontrado: {original_webm_path}"}), 400
 
-@app.route("/task_status/<task_id>", methods=["GET"])
-def get_task_status(task_id):
-    task = process_session_video.AsyncResult(task_id)
-    if task.state == 'PENDING':
-        response = {"status": "pending", "message": "Task is pending..."}
-    elif task.state == 'STARTED':
-        response = {"status": "processing", "message": "Task is processing..."}
-    elif task.state == 'SUCCESS':
-        # Si la tarea fue exitosa, el resultado contiene todos los datos de la evaluación
-        result_data = task.result
-        # Guardar los resultados en la base de datos (SQLite)
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        try:
-            c.execute("""INSERT INTO interactions (
-                name, email, scenario, message, response, timestamp,
-                evaluation, evaluation_rh, duration_seconds, tip,
-                audio_path, visual_feedback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-                result_data.get("name"),
-                result_data.get("email"),
-                result_data.get("scenario"),
-                result_data.get("full_conversation_text"),
-                result_data.get("leo_dialogue"),
-                result_data.get("timestamp"),
-                result_data.get("evaluation"),
-                result_data.get("internal_summary"),
-                result_data.get("duration"),
-                result_data.get("tip"),
-                result_data.get("final_video_url"), # ¡Ahora guardamos la URL de S3!
-                result_data.get("visual_feedback")
-            ))
-            conn.commit()
-            print(f"[DB] Interaction saved for {result_data.get('email')}, scenario {result_data.get('scenario')}.")
-            db_save_status = "ok" # Changed db_status to db_save_status to avoid conflict
-        except Exception as e:
-            print(f"[ERROR] Database insert failed from task_status: {e}")
-            db_save_status = "error" # Changed db_status to db_save_status to avoid conflict
-        finally:
-            conn.close()
-
-        response = {
-            "status": "completed",
-            "result": {
-                "evaluation": result_data.get("evaluation"),
-                "tip": result_data.get("tip"),
-                "visual_feedback": result_data.get("visual_feedback"),
-                "final_video_url": result_data.get("final_video_url"),
-                "db_save_status": db_save_status # Changed db_status to db_save_status to avoid conflict
-            }
-        }
-    elif task.state == 'FAILURE':
-        response = {"status": "failed", "message": str(task.info)}
+    print(f"[INFO] Processing video: {original_webm_path}")
+    if convert_webm_to_mp4(original_webm_path, mp4_filepath):
+        video_to_process_path = mp4_filepath
+        print(f"[INFO] Converted to MP4: {mp4_filepath}")
     else:
-        response = {"status": task.state, "message": "Unknown state"}
-    return jsonify(response)
+        video_to_process_path = original_webm_path # Try processing original if conversion fails
+        print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {original_webm_path}")
 
+    # --- TRANSCRIPTION (from video's audio) ---
+    if whisper_model:
+        try:
+            video_clip = VideoFileClip(video_to_process_path)
+            if video_clip.audio:
+                print("[INFO] Extracting audio from video...")
+                video_clip.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+                transcription_result = whisper_model.transcribe(temp_audio_path)
+                transcribed_text = transcription_result.get("text", "").strip()
+                print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
+            else:
+                print("⚠️ El video no tiene pista de audio para transcribir.")
+        except Exception as e:
+            print(f"[ERROR] Error durante la extracción de audio o transcripción: {e}")
+            transcribed_text = "Error en transcripción."
+        finally:
+            if os.path.exists(temp_audio_path):
+                os.remove(temp_audio_path)
+    else:
+        print("[WARNING] Whisper model not loaded, skipping audio transcription.")
 
-@app.route("/video/<path:filename>") # Cambiar a path para manejar URLs completas si es necesario
-def serve_video(filename):
-    # Asumimos que 'filename' es ahora la URL completa del video en S3
-    # o el nombre del objeto en S3.
-    # Si es solo el nombre del objeto, construimos la URL pública de S3.
-    # Si ya es una URL completa, la usamos directamente.
-    
-    # Para simplificar, asumimos que audio_path en la DB es la URL completa de S3
-    # Si audio_path solo guarda el nombre del objeto, necesitarías construir la URL aquí:
-    # video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{filename}"
-    
-    # Render puede tener problemas sirviendo directamente desde S3 vía redirect.
-    # La forma más sencilla es que el frontend use la URL de S3 directamente.
-    # Por ahora, esta ruta puede redirigir o simplemente retornar la URL de S3.
-    
-    # Opción 1: Redirigir directamente a la URL de S3 (más eficiente)
-    s3_video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{filename}"
-    print(f"[SERVE VIDEO] Redirigiendo a S3: {s3_video_url}")
-    return redirect(s3_video_url, code=302) # Redirección temporal
+    # --- Prepare text for GPT evaluation ---
+    # Use the transcribed text primarily for the user's side if available,
+    # otherwise fall back to frontend conversation data.
+    # Note: D-ID agent might already provide accurate transcripts.
+    user_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'user'])
+    # Prioritize transcribed_text for user input if available and substantial
+    final_user_text = transcribed_text if transcribed_text.strip() else user_dialogue
 
+    leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'agent']) # D-ID agent usually uses 'agent' role
+    if not leo_dialogue: # Fallback if agent uses 'leo' role
+        leo_dialogue = " ".join([m['text'] for m in conversation if m['role'] == 'leo'])
+
+    # Full conversation text for DB
+    full_conversation_text = "\n".join([f"{m['role'].capitalize()}: {m['text']}" for m in conversation])
+
+    print(f"[DEBUG] Final USER_TEXT for AI: {final_user_text[:100]}...")
+    print(f"[DEBUG] Final LEO_TEXT for AI: {leo_dialogue[:100]}...")
+
+    if not final_user_text.strip() and not leo_dialogue.strip():
+        print("[ERROR] No hay texto de usuario ni de Leo para evaluar. Verifica que el video tenga audio y que el frontend envíe la conversación.")
+        return jsonify({
+            "status": "error",
+            "evaluation": "No se encontró contenido válido para evaluar.",
+            "tip": "Asegúrate de hablar y de que el asistente Leo también responda durante la sesión."
+        }), 400
+
+    # --- AI EVALUATION (GPT) ---
+    try:
+        summaries = evaluate_interaction(final_user_text, leo_dialogue) # Use the specific texts
+        public_summary = summaries.get("public", public_summary)
+        internal_summary = summaries.get("internal", internal_summary)
+        print(f"[INFO] AI Evaluation successful. Public: {public_summary[:50]}...")
+    except Exception as e:
+        public_summary = "⚠️ Evaluación automática no disponible."
+        internal_summary = f"❌ Error en evaluación: {str(e)}"
+        print(f"[ERROR] Error calling evaluate_interaction: {e}")
+
+    # --- PERSONALIZED TIP (GPT) ---
+    try:
+        tip_completion = client.chat.completions.create(
+            model="gpt-4o", # Using gpt-4o for potentially better performance/cost
+            messages=[
+                {"role": "system", "content": "Eres un coach médico empático y útil. Ofrece 2-3 consejos prácticos, claros y concretos sobre cómo mejorar las interacciones de un representante médico con doctores. Enfócate en el participante."},
+                {"role": "user", "content": f"Basado en esta conversación:\n\nParticipante: {final_user_text}\nLeo: {leo_dialogue}\n\n¿Qué podría hacer mejor el participante la próxima vez? Ofrece consejos accionables y positivos."}
+            ],
+            temperature=0.7, # Slightly higher temperature for more creative advice
+        )
+        tip_text = tip_completion.choices[0].message.content.strip()
+        print(f"[INFO] AI Tip generated: {tip_text[:50]}...")
+    except Exception as e:
+        tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
+        print(f"[ERROR] Error generating personalized tip: {e}")
+
+    # --- VISUAL ANALYSIS ---
+    if video_to_process_path and os.path.exists(video_to_process_path):
+        try:
+            print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
+            video_stats = analyze_video_posture(video_to_process_path)
+            if video_stats["error"]:
+                posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
+            elif video_stats['frames_total'] > 0:
+                visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
+                posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
+            else:
+                posture_feedback = "No se pudieron analizar frames de video."
+            print(f"[POSTURA] {posture_feedback}")
+        except Exception as e:
+            posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
+            print(f"[ERROR] Unexpected error in visual analysis: {e}")
+    else:
+        print(f"[WARNING] Skipping visual analysis: Video file not found at {video_to_process_path}")
+        posture_feedback = "Video no disponible para análisis visual."
+
+    # --- SAVE TO DATABASE ---
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("""INSERT INTO interactions (
+            name, email, scenario, message, response, timestamp,
+            evaluation, evaluation_rh, duration_seconds, tip,
+            audio_path, visual_feedback
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
+            public_summary, internal_summary, duration, tip_text,
+            video_filename, posture_feedback # Store the original webm filename
+        ))
+        conn.commit()
+        print(f"[DB] Interaction saved for {email}, scenario {scenario}.")
+    except Exception as e:
+        print(f"[ERROR] Database insert failed: {e}")
+        # Optionally, roll back if needed
+        # conn.rollback()
+        return jsonify({"status": "error", "error": f"Error al guardar en la base de datos: {str(e)}"}), 500
+    finally:
+        conn.close()
+
+    # --- Cleanup temporary files ---
+    try:
+        if os.path.exists(mp4_filepath):
+            os.remove(mp4_filepath)
+            print(f"Cleaned up {mp4_filepath}")
+        # Keep the original .webm for serving if needed, or remove it too
+        # if os.path.exists(original_webm_path):
+        #     os.remove(original_webm_path)
+        #     print(f"Cleaned up {original_webm_path}")
+    except Exception as e:
+        print(f"[CLEANUP ERROR] Failed to remove temp files: {e}")
+
+    # --- Return JSON Response to Frontend ---
+    return jsonify({
+        "status": "ok",
+        "evaluation": public_summary,
+        "tip": tip_text,
+        "visual_feedback": posture_feedback # Send visual feedback to frontend too if needed
+    })
 
 # ----------------------
 # Admin Routes
@@ -730,3 +939,6 @@ def delete_session(session_id):
 @app.route("/healthz")
 def health_check():
     return "OK", 200
+
+# El bloque if __name__ == "__main__": ha sido eliminado para despliegue en Render con Gunicorn.
+# Gunicorn se encarga de iniciar la aplicación. 
