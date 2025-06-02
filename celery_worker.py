@@ -1,7 +1,7 @@
 # celery_worker.py
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date # Import date for patching users table
 from celery import Celery
 from dotenv import load_dotenv
 
@@ -12,6 +12,7 @@ import cv2
 import mediapipe as mp
 import subprocess
 import json
+import secrets # Added for token generation in user patching
 
 # Import boto3 for S3 operations, as the worker will now manage S3 uploads/downloads
 import boto3
@@ -69,6 +70,78 @@ celery_app.conf.update(
     timezone='America/Mexico_City',
     enable_utc=False,
 )
+
+# ----------------------
+# DB Init & Schema Patching (COPIED FROM APP.PY)
+# ----------------------
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS interactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT,
+        scenario TEXT,
+        message TEXT,           -- Full conversation text
+        response TEXT,          -- Leo's responses consolidated
+        audio_path TEXT,        -- URL del video en S3 (will be updated by Celery task)
+        timestamp TEXT,
+        evaluation TEXT,        -- Public summary from GPT (will be updated by Celery task)
+        evaluation_rh TEXT,     -- Internal/RH summary from GPT (will be updated by Celery task)
+        duration_seconds INTEGER DEFAULT 0,
+        tip TEXT,               -- Personalized tip from GPT (will be updated by Celery task)
+        visual_feedback TEXT    -- Feedback from video analysis (will be updated by Celery task)
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT UNIQUE,
+        start_date TEXT,
+        end_date TEXT,
+        active INTEGER DEFAULT 1,
+        token TEXT UNIQUE -- Unique token for user access
+    )''')
+    conn.commit()
+    conn.close()
+    print("\U0001F4C3 Database initialized or already exists in worker.")
+
+def patch_db_schema():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    # Check and add 'evaluation_rh' if not exists
+    c.execute("PRAGMA table_info(interactions)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'evaluation_rh' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
+        print("Added 'evaluation_rh' to interactions table in worker.")
+
+    # Check and add 'tip' if not exists
+    if 'tip' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
+        print("Added 'tip' to interactions table in worker.")
+
+    # Check and add 'visual_feedback' if not exists
+    if 'visual_feedback' not in columns:
+        c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
+        print("Added 'visual_feedback' to interactions table in worker.")
+
+    # Check and add 'token' to users table if not exists
+    c.execute("PRAGMA table_info(users)")
+    user_columns = [col[1] for col in c.fetchall()]
+    if 'token' not in user_columns:
+        c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
+        print("Added 'token' to users table in worker.")
+        # Optionally, generate tokens for existing users if needed:
+        # c.execute("UPDATE users SET token = substr(hex(randomblob(8)), 1, 16) WHERE token IS NULL")
+
+    conn.commit()
+    conn.close()
+    print("\U0001F527 Database schema patched in worker.")
+
+# Initialize and patch DB on worker startup
+init_db()
+patch_db_schema()
 
 # ----------------------
 # Helper Functions (moved from app.py, now part of worker's scope)
