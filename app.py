@@ -281,9 +281,6 @@ def logout():
 # ----------------------
 # User Session Routes
 # ----------------------
-@app.route("/")
-def index():
-    return render_template("index.html")
 
 @app.route("/select", methods=["POST"])
 def select():
