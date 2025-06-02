@@ -71,6 +71,10 @@ app = Flask(
 )
 CORS(app) # Enable CORS for frontend communication
 
+@app.route("/")
+def index():
+    return render_template("index.html")
+
 # app.config['UPLOAD_FOLDER'] ya no es el destino final, es solo temporal si se usa
 app.config['UPLOAD_FOLDER'] = TEMP_PROCESSING_FOLDER
 
@@ -711,6 +715,3 @@ def delete_session(session_id):
 @app.route("/healthz")
 def health_check():
     return "OK", 200
-
-# El bloque if __name__ == "__main__": ha sido eliminado para despliegue en Render con Gunicorn.
-# Gunicorn se encarga de iniciar la aplicación.
