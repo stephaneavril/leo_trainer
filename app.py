@@ -1,24 +1,18 @@
 import os
+import json
 import sqlite3
+import secrets
+import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime, date
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+from celery import Celery
+from celery_worker import celery_app
 import openai
 import whisper
-import pandas as pd
-import matplotlib.pyplot as plt
-# Removed synchronous processing imports from app.py
-# from evaluator import evaluate_interaction # This is now exclusively in celery_worker.py
-# from moviepy.editor import VideoFileClip
-# import cv2
-# import mediapipe as mp
-# import subprocess # For ffmpeg
-import secrets
-import json
-from celery import Celery
-from celery_worker import celery_app # Ensure this import is correct
 
 # Importar boto3 para S3
 import boto3
@@ -397,62 +391,45 @@ def serve_video(filename):
     print(f"[SERVE VIDEO] Redirigiendo a S3: {s3_video_url}")
     return redirect(s3_video_url, code=302) # Redirección temporal
 
-@app.route("/upload_video", methods=["POST"])
+@app.route('/upload_video', methods=['POST'])
 def upload_video():
-    name = request.form.get("name")
-    email = request.form.get("email")
-    file = request.files.get("video")
+    video_file = request.files.get('video')
+    name = request.form.get('name')
+    email = request.form.get('email')
 
-    if not file:
-        return jsonify({"error": "No se envió ningún archivo de video."}), 400
+    if not video_file or not name or not email:
+        return jsonify({'status': 'error', 'message': 'Faltan datos (video, nombre o correo).'}), 400
 
-    if file.filename == '':
-        return jsonify({"error": "Nombre de archivo vacío."}), 400
+    filename = secure_filename(f"{email}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.webm")
+    local_path = os.path.join("temp_uploads", filename)
+    os.makedirs("temp_uploads", exist_ok=True)
+    video_file.save(local_path)
 
-    # Create a unique filename for the webm
-    timestamp_str = datetime.now().strftime('%Y%m%d%H%M%S')
-    webm_filename = secure_filename(f"{name}_{email}_{timestamp_str}.webm")
-    webm_filepath = os.path.join(app.config['UPLOAD_FOLDER'], webm_filename)
-    
     try:
-        file.save(webm_filepath)
-        print(f"[UPLOAD] Video WEBM guardado en: {webm_filepath}")
-
-        # --- NEW CODE ADDED HERE: Upload the WEBM file to S3 ---
-        s3_url = upload_file_to_s3(webm_filepath, AWS_S3_BUCKET_NAME, webm_filename)
+        # Subir a S3
+        s3_key = filename
+        s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key)
         if not s3_url:
-            # If S3 upload fails, return an error to the frontend
-            print(f"[ERROR] Falló la subida del WEBM original a S3: {webm_filepath}")
-            return jsonify({"status": "error", "message": "Failed to upload video to S3."}), 500
-        print(f"[S3 UPLOAD] Video WEBM subido a S3: {s3_url}")
-        # --- END NEW CODE ---
+            raise Exception("No se pudo subir el archivo a S3.")
 
-        # Store the filename in session to link with log_full_session later
-        # This filename (webm_filename) is what the Celery worker will use to look for in S3
-        session["last_video_filename"] = webm_filename
+        # Lanzar tarea de procesamiento
+        celery_payload = {
+            "name": name,
+            "email": email,
+            "scenario": "Desconocido",  # puedes extraerlo del formulario si lo agregas
+            "duration": 0,
+            "conversation": [],  # Si no capturas conversación, déjalo vacío
+            "video_object_key": s3_key
+        }
+        process_session_video.delay(celery_payload)
 
-        # Optionally, update last interaction to include video path if an entry already exists
-        # This might be redundant if log_full_session is always called after upload_video
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # Attempt to find a recent interaction for this user/scenario to update it
-        # This assumes 'upload_video' happens very close to an interaction start.
-        # A more robust solution might pass an an interaction_id from frontend.
-        c.execute("SELECT id FROM interactions WHERE name = ? AND email = ? ORDER BY timestamp DESC LIMIT 1", (name, email))
-        row = c.fetchone()
-        if row:
-            # Update audio_path to point to the S3 URL of the original WEBM.
-            # The Celery task will later update it to the S3 URL of the converted MP4.
-            c.execute("UPDATE interactions SET audio_path = ? WHERE id = ?", (s3_url, row[0]))
-            conn.commit()
-        conn.close()
-
-        # Return the S3 URL of the uploaded WEBM file to the frontend
-        return jsonify({"status": "saved", "path": s3_url})
-
+        return jsonify({'status': 'ok', 'video_url': s3_url})
     except Exception as e:
-        print(f"[ERROR] Error during video upload process: {e}")
-        return jsonify({"error": f"Error al procesar la subida del video: {str(e)}"}), 500
+        print(f"[ERROR] upload_video: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        if os.path.exists(local_path):
+            os.remove(local_path)
 
 @app.route("/log_full_session", methods=["POST"])
 def log_full_session():
