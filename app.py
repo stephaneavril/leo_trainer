@@ -457,7 +457,8 @@ def log_full_session():
     }
 
     # Dispatch the processing to a Celery task asynchronously
-    task = celery_app.send_task('celery_worker.process_session_video', args=[task_data]) # Explicitly sending by name
+    from celery_worker import process_session_video
+    task = process_session_video.delay(task_data)
 
     print(f"[CELERY] Task dispatched: {task.id} for user {email}")
 
