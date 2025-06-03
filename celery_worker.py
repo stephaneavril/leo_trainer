@@ -7,10 +7,12 @@ from celery import Celery
 from dotenv import load_dotenv
 
 from evaluator import evaluate_interaction
-# from moviepy.editor import VideoFileClip # Comentado porque usaremos ffmpeg directamente
+# Importar moviepy ya no es necesario para la extracción de audio, se usa ffmpeg directamente
+# import moviepy.editor as VideoFileClip # Comentado o eliminado
+
 import cv2
 import mediapipe as mp
-import subprocess
+import subprocess # Necesario para ejecutar comandos ffmpeg
 import json
 import secrets
 
