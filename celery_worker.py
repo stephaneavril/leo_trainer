@@ -6,6 +6,7 @@ from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
 import time # Necesario para esperar la transcripción
+import requests # AÑADIDO: Necesario para descargar el transcript de AWS Transcribe
 
 from evaluator import evaluate_interaction
 import cv2
@@ -204,7 +205,7 @@ def analyze_video_posture(video_path):
             summary["frames_total"] += 1
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             # Usar cv2.CascadeClassifier para detección facial
-            faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectManyScales(gray, 1.3, 5) # Corregir a detectMultiScale
+            faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectMultiScale(gray, 1.3, 5) # Corregido de detectManyScales
             if len(faces) > 0:
                 summary["face_detected_frames"] += 1
         cap.release()
