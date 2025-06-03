@@ -212,7 +212,7 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
         "error_during_eval": gpt_internal_structured_feedback.get("error", "No error detected from GPT.")
     }
     
-    final_internal_summary_json = json.dumps(final_internal_summary_dict, ensure_ascii=False, indent=2)
+    # ELIMINAR O COMENTAR ESTA LÍNEA: final_internal_summary_json = json.dumps(final_internal_summary_dict, ensure_ascii=False, indent=2)
 
 
     public_summary_for_user = textwrap.dedent(f"""
@@ -229,6 +229,6 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
 
     return {
         "public": public_summary_for_user.strip(),
-        "internal": final_internal_summary_json,
+        "internal": final_internal_summary_dict, # CAMBIO: Devolver el diccionario, no la cadena JSON
         "level": feedback_level
     }
