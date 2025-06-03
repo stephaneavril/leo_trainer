@@ -264,12 +264,14 @@ def select():
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    # CAMBIO: Priorizar request.form para token, luego session
     name = request.form.get("name") or session.get("name")
     email = request.form.get("email") or session.get("email")
     scenario = request.form["scenario"] if "scenario" in request.form else session.get("scenario")
-    token = session.get("token") # Obtener el token de la sesión
+    token = request.form.get("token") or session.get("token") # Obtener el token del formulario o de la sesión
 
-    if not name or not email or not scenario or not token: # Asegurarse de que el token también esté presente
+    if not name or not email or not scenario or not token: 
+        print(f"DEBUG: Redirigiendo a index desde /chat. Datos faltantes: Name={name}, Email={email}, Scenario={scenario}, Token={token}")
         return redirect(url_for('index'))
 
     session["scenario"] = scenario
@@ -282,7 +284,7 @@ def chat():
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
-    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds, token=token) # Pasar el token a la plantilla
+    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds, token=token) 
 
 @app.route("/dashboard", methods=["GET", "POST"]) 
 def dashboard():
@@ -326,7 +328,7 @@ def dashboard():
     if used_seconds >= max_seconds and request.method == "POST": 
         pass 
 
-    return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds)
+    return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds, token=token) 
 
 @app.route("/video/<path:filename>") 
 def serve_video(filename):
