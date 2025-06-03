@@ -7,7 +7,7 @@ from celery import Celery
 from dotenv import load_dotenv
 
 from evaluator import evaluate_interaction
-from moviepy.editor import VideoFileClip
+# from moviepy.editor import VideoFileClip # Comentado porque usaremos ffmpeg directamente
 import cv2
 import mediapipe as mp
 import subprocess
@@ -40,6 +40,7 @@ s3_client = boto3.client(
 
 try:
     import whisper
+    # Cargar el modelo "tiny" para eficiencia en CPU
     whisper_model = whisper.load_model("tiny")
     print("\U0001F3A7 Whisper model loaded successfully in Celery worker.")
 except Exception as e:
@@ -131,7 +132,8 @@ def upload_file_to_s3(file_path, bucket, object_name=None):
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
-        s3_client.upload_file(file_path, bucket, object_name)
+        # AÑADIDO: ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
+        s3_client.upload_file(file_path, bucket, object_name, ExtraArgs={'ACL': 'public-read'})
         print(f"[S3 UPLOAD] Archivo {file_path} subido a s3://{bucket}/{object_name}")
         return f"https://{bucket}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{object_name}"
     except ClientError as e:
@@ -193,6 +195,7 @@ def analyze_video_posture(video_path):
                 break
             summary["frames_total"] += 1
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Usar cv2.CascadeClassifier para detección facial
             faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectMultiScale(gray, 1.3, 5)
             if len(faces) > 0:
                 summary["face_detected_frames"] += 1
@@ -276,25 +279,40 @@ def process_session_video(data):
             video_to_process_path = local_webm_path # Fallback to original WEBM
             print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
 
-        video_clip = None
         try:
             if whisper_model:
                 try:
-                    video_clip = VideoFileClip(video_to_process_path)
-                    if video_clip.audio:
-                        print("[INFO] Extracting audio from video...")
-                        video_clip.audio.write_audiofile(temp_audio_path, verbose=False, logger=None)
+                    # Usar subprocess para extraer audio directamente con ffmpeg, más eficiente en memoria que moviepy.VideoFileClip
+                    print("[INFO] Extracting audio from video using ffmpeg directly...")
+                    command = [
+                        "ffmpeg", "-i", video_to_process_path,  # Video de entrada
+                        "-vn",                                  # No incluir video
+                        "-acodec", "pcm_s16le",                 # Codec de audio PCM (16-bit, little-endian)
+                        "-ar", "16000",                         # Tasa de muestreo de audio (16 kHz, común para voz)
+                        "-ac", "1",                             # Un canal de audio (mono)
+                        "-y",                                   # Sobreescribir archivo de salida sin preguntar
+                        temp_audio_path                         # Archivo de audio de salida
+                    ]
+                    # Ejecutar el comando de ffmpeg. stdout y stderr se redirigen para evitar saturar los logs
+                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                    print(f"[INFO] Audio extracted to {temp_audio_path}.")
+
+                    # Verificar si el archivo de audio se creó correctamente y no está vacío
+                    if os.path.exists(temp_audio_path) and os.path.getsize(temp_audio_path) > 0:
                         transcription_result = whisper_model.transcribe(temp_audio_path)
                         transcribed_text = transcription_result.get("text", "").strip()
                         print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
                     else:
-                        print("⚠️ El video no tiene pista de audio para transcribir.")
+                        print("⚠️ No se pudo extraer audio o el archivo de audio está vacío.")
+                        transcribed_text = "Error en transcripción (audio vacío o no extraído)."
+                except subprocess.CalledProcessError as e:
+                    # Captura errores específicos de ffmpeg
+                    print(f"[ERROR] Error durante la extracción de audio con ffmpeg: {e.stderr.decode()}")
+                    transcribed_text = "Error en transcripción (extracción de audio fallida)."
                 except Exception as e:
-                    print(f"[ERROR] Error durante la extracción de audio o transcripción: {e}")
+                    # Captura otros errores durante la transcripción de Whisper
+                    print(f"[ERROR] Error durante la transcripción de Whisper: {e}")
                     transcribed_text = "Error en transcripción."
-                finally:
-                    if video_clip:
-                        video_clip.close()
             else:
                 print("[WARNING] Whisper model not loaded, skipping audio transcription.")
 

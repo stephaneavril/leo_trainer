@@ -180,7 +180,8 @@ def upload_file_to_s3(file_path, bucket, object_name=None):
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
-        s3_client.upload_file(file_path, bucket, object_name)
+        # AÑADIDO: ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
+        s3_client.upload_file(file_path, bucket, object_name, ExtraArgs={'ACL': 'public-read'})
         print(f"[S3 UPLOAD] Archivo {file_path} subido a s3://{bucket}/{object_name}")
         return f"https://{bucket}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{object_name}"
     except ClientError as e:
@@ -412,7 +413,8 @@ def upload_video():
     try:
         # Subir a S3
         s3_key = filename
-        s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key)
+        # MODIFICADO: Añadido ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
+        s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key) 
         if not s3_url:
             raise Exception("No se pudo subir el archivo a S3.")
         
