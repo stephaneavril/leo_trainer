@@ -13,7 +13,7 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def evaluate_interaction(user_text, leo_text, video_path=None): # leo_text will be empty now
+def evaluate_interaction(user_text, leo_text, video_path=None):
     """
     Evalúa la conversación y el lenguaje corporal del participante si hay video.
     Retorna evaluación pública (usuario) y evaluación RH (técnica).

@@ -6,7 +6,7 @@ from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
 import time # Necesario para esperar la transcripción
-import requests # AÑADIDO: Necesario para descargar el transcript de AWS Transcribe
+import requests # Necesario para descargar el transcript de AWS Transcribe
 
 from evaluator import evaluate_interaction
 import cv2
@@ -326,7 +326,7 @@ def process_session_video(data):
                         TranscriptionJobName=job_name,
                         Media={'MediaFileUri': audio_s3_url},
                         MediaFormat='wav', # Asegúrate de que coincida con el formato de salida de ffmpeg
-                        LanguageCode='es-MX' # O el idioma que necesites, ej. 'en-US'
+                        LanguageCode='es-US' # CORREGIDO: de 'es-MX' a 'es-US'
                     )
                     print(f"[AWS TRANSCRIBE] Transcripción iniciada: {job_name}")
 
