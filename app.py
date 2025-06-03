@@ -11,10 +11,11 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from celery import Celery
-from celery_worker import celery_app
+from celery_worker import celery_app # Asegúrate de que celery_app se importe correctamente si se usa aquí
+
 import openai
-import whisper
-import subprocess # Added for convert_webm_to_mp4 and analyze_video_posture, though these are now primarily in celery_worker.py
+# import whisper # ELIMINAR O COMENTAR ESTA LÍNEA
+import subprocess 
 
 # Importar boto3 para S3
 import boto3
@@ -41,22 +42,23 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
+# ELIMINAR TODO ESTE BLOQUE DE WHISPER EN app.py
 # Load Whisper model once when the app starts
-try:
-    # Whisper model can be loaded in app.py if it's also used here,
-    # but if it's only used by Celery task, move this to celery_worker.py
-    # For now, keeping it here as it was in original to avoid breaking existing flow.
-    # Best practice is to load it only where it's used (i.e., in celery_worker.py)
-    whisper_model = whisper.load_model("base")
-    print("\U0001F3A7 Whisper model loaded successfully.")
-except Exception as e:
-    print(f"\U0001F525 Error loading Whisper model: {e}")
-    whisper_model = None # Handle case where model fails to load
+# try:
+#     # Whisper model can be loaded in app.py if it's also used here,
+#     # but if it's only used by Celery task, move this to celery_worker.py
+#     # For now, keeping it here as it was in original to avoid breaking existing flow.
+#     # Best practice is to load it only where it's used (i.e., in celery_worker.py)
+#     whisper_model = whisper.load_model("base")
+#     print("\U0001F3A7 Whisper model loaded successfully.")
+# except Exception as e:
+#     print(f"\U0001F525 Error loading Whisper model: {e}")
+#     whisper_model = None # Handle case where model fails to load
 
 # --- Configuration (Carpeta temporal local para procesamiento) ---
 # Esta carpeta será usada solo para archivos temporales mientras se procesan.
 # DEBE SER PERSISTENTE EN RENDER.
-PERSISTENT_DISK_MOUNT_PATH = "/var/data" # Your Render persistent disk mount path
+PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") # Your Render persistent disk mount path
 TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") # Use a subfolder on the persistent disk
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
@@ -144,7 +146,6 @@ def patch_db_schema():
         c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
         print("Added 'evaluation_rh' to interactions table.")
 
-    # Check and add 'tip' if not exists
     if 'tip' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
         print("Added 'tip' to interactions table.")
@@ -176,10 +177,12 @@ patch_db_schema()
 # ----------------------
 # Función para subir archivo a S3
 def upload_file_to_s3(file_path, bucket, object_name=None):
+    """Sube un archivo a un bucket de S3"""
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
-        s3_client.upload_file(file_path, bucket, object_name) # <-- LÍNEA CORREGIDA
+        # LÍNEA MODIFICADA: Eliminado ExtraArgs={'ACL': 'public-read'}
+        s3_client.upload_file(file_path, bucket, object_name) 
         print(f"[S3 UPLOAD] Archivo {file_path} subido a s3://{bucket}/{object_name}")
         return f"https://{bucket}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{object_name}"
     except ClientError as e:
@@ -411,14 +414,13 @@ def upload_video():
     try:
         # Subir a S3
         s3_key = filename
-        # AÑADIDO: ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
+        # MODIFICADO: Eliminado ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
         s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key) 
         if not s3_url:
             raise Exception("No se pudo subir el archivo a S3.")
         
         print(f"[S3] Subido a: {s3_url}")
 
-        # ALMACENAR EL S3_KEY EN LA SESIÓN PARA USO POSTERIOR
         session["last_video_s3_key"] = s3_key # CAMBIO: Usar un nombre de clave más específico
         print(f"DEBUG: Stored s3_key in session: {session['last_video_s3_key']}")
 
@@ -651,3 +653,4 @@ def health_check():
 
 # The if __name__ == "__main__": block has been removed for deployment with Gunicorn.
 # Gunicorn is responsible for starting the application.
+
