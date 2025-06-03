@@ -585,6 +585,20 @@ def delete_session(session_id):
     finally:
         conn.close()
 
+@app.route("/test_db")
+def test_db_connection():
+    try:
+        conn = sqlite3.connect(DB_PATH) # DB_PATH es tu variable global definida arriba
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM interactions")
+        count = c.fetchone()[0]
+        c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY timestamp DESC LIMIT 5") # Obtiene algunas columnas para verificar
+        rows = c.fetchall()
+        conn.close()
+        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {rows}</p><p>DB_PATH: {DB_PATH}</p>"
+    except Exception as e:
+        return f"<h1>DB Test Error: {e}</h1><p>DB_PATH: {DB_PATH}</p>", 500
+
 @app.route("/healthz")
 def health_check():
     return "OK", 200
