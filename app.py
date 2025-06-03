@@ -321,8 +321,13 @@ def dashboard():
     used_seconds = c.fetchone()[0] or 0
     max_seconds = 1800 
 
+    # --- DEBUGGING PRINTS ADDED HERE FOR DASHBOARD ---
+    print(f"DEBUG: Dashboard Query - name='{name}', email='{email}'")
     c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip, visual_feedback FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
     records = c.fetchall()
+    print(f"DEBUG: Dashboard Query Result - Fetched {len(records)} records.")
+    # --- END DEBUGGING PRINTS ---
+
     conn.close()
 
     if used_seconds >= max_seconds and request.method == "POST": 
@@ -453,10 +458,14 @@ def admin_panel():
             print(f"[ADMIN] Regenerated token for user: {user_id}")
         conn.commit()
 
+    # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
+    print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
     c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback
-                 FROM interactions
-                 ORDER BY timestamp DESC""")
+                     FROM interactions
+                     ORDER BY timestamp DESC""")
     raw_data = c.fetchall()
+    print(f"DEBUG: Admin Panel Query Result - Fetched {len(raw_data)} raw data entries.")
+    # --- END DEBUGGING PRINTS ---
 
     processed_data = []
     for row in raw_data:
