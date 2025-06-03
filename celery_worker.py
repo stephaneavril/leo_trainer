@@ -346,7 +346,7 @@ def process_session_video(data):
                         transcript_response = requests.get(transcript_uri)
                         transcript_json = transcript_response.json()
                         transcribed_text = transcript_json['results']['transcripts'][0]['transcript']
-                        print(f"[AWS TRANSCRIBE] Transcripción completa: {transcribed_text[:100]}...")
+                        print(f"[AWS TRANSCRIBE] Transcripción completa: '{transcribed_text}'") # AÑADIDO: Log para ver el contenido real
                     else:
                         print(f"[AWS TRANSCRIBE ERROR] Transcripción fallida o no completada: {job_status}")
                         transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
@@ -415,6 +415,9 @@ def process_session_video(data):
     
     full_conversation_text = f"Participante: {final_user_text}\nLeo: (No se capturó el diálogo del agente D-ID)"
 
+    # AÑADIDO: Log para ver el contenido de final_user_text antes de la evaluación
+    print(f"DEBUG: final_user_text antes de evaluate_interaction: '{final_user_text}'")
+
     if not final_user_text.strip():
         print("[ERROR] No hay texto de usuario para evaluar (transcripción de AWS Transcribe vacía).")
         public_summary = "Error: No hay contenido de usuario para evaluar."
@@ -423,6 +426,10 @@ def process_session_video(data):
     else:
         try:
             summaries = evaluate_interaction(final_user_text, leo_dialogue, video_to_process_path if video_to_process_path and os.path.exists(video_to_process_path) else None)
+            # AÑADIDO: Log para ver el tipo y contenido de summaries
+            print(f"DEBUG: Tipo de summaries después de evaluate_interaction: {type(summaries)}")
+            print(f"DEBUG: Contenido de summaries después de evaluate_interaction: {summaries}")
+
             public_summary = summaries.get("public", public_summary)
             internal_summary = summaries.get("internal", internal_summary)
             if "error" in summaries.get("internal", {}):
