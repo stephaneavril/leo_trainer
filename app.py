@@ -1,4 +1,5 @@
 # app.py
+
 import os
 import json
 import sqlite3
@@ -11,13 +12,11 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from celery import Celery
-from celery_worker import celery_app # Asegúrate de que celery_app se importe correctamente si se usa aquí
+from celery_worker import celery_app 
 
 import openai
-# import whisper # ELIMINAR O COMENTAR ESTA LÍNEA
 import subprocess 
 
-# Importar boto3 para S3
 import boto3
 from botocore.exceptions import ClientError
 
@@ -25,16 +24,13 @@ print("\U0001F680 Iniciando Leo Virtual Trainer...")
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
-client = openai # This correctly sets the OpenAI client
+client = openai 
 
-# --- Configuración de AWS S3 ---
-# Obtener las credenciales de AWS de las variables de entorno
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "leo-trainer-videos") # Usa el nombre de tu bucket de S3
-AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "us-west-2") # Usa la región de tu bucket de S3
+AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "leo-trainer-videos") 
+AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "us-west-2") 
 
-# Inicializar cliente S3
 s3_client = boto3.client(
     's3',
     aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -42,38 +38,18 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
-# ELIMINAR TODO ESTE BLOQUE DE WHISPER EN app.py
-# Load Whisper model once when the app starts
-# try:
-#     # Whisper model can be loaded in app.py if it's also used here,
-#     # but if it's only used by Celery task, move this to celery_worker.py
-#     # For now, keeping it here as it was in original to avoid breaking existing flow.
-#     # Best practice is to load it only where it's used (i.e., in celery_worker.py)
-#     whisper_model = whisper.load_model("base")
-#     print("\U0001F3A7 Whisper model loaded successfully.")
-# except Exception as e:
-#     print(f"\U0001F525 Error loading Whisper model: {e}")
-#     whisper_model = None # Handle case where model fails to load
-
-# --- Configuration (Carpeta temporal local para procesamiento) ---
-# Esta carpeta será usada solo para archivos temporales mientras se procesan.
-# DEBE SER PERSISTENTE EN RENDER.
-PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") # Your Render persistent disk mount path
-TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") # Use a subfolder on the persistent disk
+PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") 
+TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
-# Obtener la ruta del directorio actual donde se ejecuta app.py
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
-# --- INICIALIZAR FLASK CON RUTAS DE PLANTILLAS Y ESTÁTICOS ---
-# Flask busca 'templates' y 'static' en la misma carpeta que el archivo app.py
-# Al especificar template_folder y static_folder, nos aseguramos de que Flask los encuentre.
 app = Flask(
     __name__,
     template_folder=os.path.join(BASE_DIR, 'templates'),
     static_folder=os.path.join(BASE_DIR, 'static')
 )
-CORS(app) # Enable CORS for frontend communication
+CORS(app) 
 
 @app.before_request
 def log_request_info():
@@ -90,20 +66,14 @@ def log_request_info():
 def index():
     return render_template("index.html")
 
-# app.config['UPLOAD_FOLDER'] ya no es el destino final, es solo temporal si se usa
 app.config['UPLOAD_FOLDER'] = TEMP_PROCESSING_FOLDER
 
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") # Use a strong, unique key in .env
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") # Change this for production!
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") 
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") 
 
-# DB_PATH ahora estará en el disco persistente
 DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-
-# ----------------------
-# DB Init & Schema Patching
-# ----------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -139,7 +109,6 @@ def patch_db_schema():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # Check and add 'evaluation_rh' if not exists
     c.execute("PRAGMA table_info(interactions)")
     columns = [col[1] for col in c.fetchall()]
     if 'evaluation_rh' not in columns:
@@ -150,38 +119,28 @@ def patch_db_schema():
         c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
         print("Added 'tip' to interactions table.")
 
-    # Check and add 'visual_feedback' if not exists
     if 'visual_feedback' not in columns:
         c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
         print("Added 'visual_feedback' to interactions table.")
 
-    # Check and add 'token' to users table if not exists
     c.execute("PRAGMA table_info(users)")
     user_columns = [col[1] for col in c.fetchall()]
     if 'token' not in user_columns:
         c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
         print("Added 'token' to users table.")
-        # Optionally, generate tokens for existing users if needed:
-        # c.execute("UPDATE users SET token = substr(hex(randomblob(8)), 1, 16) WHERE token IS NULL")
 
     conn.commit()
     conn.close()
     print("\U0001F527 Database schema patched.")
 
-# Initialize and patch DB on app startup
 init_db()
 patch_db_schema()
 
-# ----------------------
-# Helper Functions (These are now mostly used by Celery task)
-# ----------------------
-# Función para subir archivo a S3
 def upload_file_to_s3(file_path, bucket, object_name=None):
     """Sube un archivo a un bucket de S3"""
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
-        # LÍNEA MODIFICADA: Eliminado ExtraArgs={'ACL': 'public-read'}
         s3_client.upload_file(file_path, bucket, object_name) 
         print(f"[S3 UPLOAD] Archivo {file_path} subido a s3://{bucket}/{object_name}")
         return f"https://{bucket}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{object_name}"
@@ -189,7 +148,6 @@ def upload_file_to_s3(file_path, bucket, object_name=None):
         print(f"[S3 ERROR] Falló la subida a S3: {e}")
         return None
 
-# Función para descargar archivo de S3
 def download_file_from_s3(bucket, object_name, file_path):
     """Descarga un archivo de un bucket de S3"""
     try:
@@ -202,18 +160,14 @@ def download_file_from_s3(bucket, object_name, file_path):
 
 def convert_webm_to_mp4(input_path, output_path):
     """Converts a .webm video to .mp4 using ffmpeg."""
-    # This function is now logically part of the Celery worker's scope
-    # but kept here if other parts of app.py were to use it synchronously.
-    # For a clean separation, this function should be moved to celery_worker.py or a shared utility.
     try:
         command = [
             "ffmpeg", "-i", input_path,
             "-c:v", "libx264", "-preset", "medium", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
-            "-strict", "experimental", "-y", # -y to overwrite output files
+            "-strict", "experimental", "-y", 
             output_path
         ]
-        # Using DEVNULL to suppress ffmpeg output unless there's an error
         result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
         print(f"[FFMPEG] Conversion successful: {input_path} to {output_path}")
         return True
@@ -229,10 +183,8 @@ def convert_webm_to_mp4(input_path, output_path):
 
 def analyze_video_posture(video_path):
     """Analyzes video for face detection as a proxy for posture/presence."""
-    # This function is now logically part of the Celery worker's scope
-    # For a clean separation, this function should be moved to celery_worker.py or a shared utility.
-    import mediapipe as mp # Import here to avoid top-level dependency if not used synchronously
-    import cv2 # Import here
+    import mediapipe as mp 
+    import cv2 
     mp_face = mp.solutions.face_detection
     summary = {"frames_total": 0, "face_detected_frames": 0, "error": None}
     try:
@@ -246,9 +198,8 @@ def analyze_video_posture(video_path):
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
-                    break # End of video
+                    break 
                 summary["frames_total"] += 1
-                # Convert the BGR image to RGB.
                 results = detector.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 if results.detections:
                     summary["face_detected_frames"] += 1
@@ -258,10 +209,6 @@ def analyze_video_posture(video_path):
         print(f"[ERROR] Error during video posture analysis: {e}")
     return summary
 
-
-# ----------------------
-# Auth Routes
-# ----------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -275,10 +222,6 @@ def login():
 def logout():
     session.clear()
     return redirect("/")
-
-# ----------------------
-# User Session Routes
-# ----------------------
 
 @app.route("/select", methods=["POST"])
 def select():
@@ -304,34 +247,31 @@ def select():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    conn = sqlite3.connect(DB_PATH) # Re-open connection for this query
+    conn = sqlite3.connect(DB_PATH) 
     c = conn.cursor()
     c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
-    if used_seconds >= 1800: # 30 minutes limit
+    if used_seconds >= 1800: 
         return "Has alcanzado el límite mensual de uso (30 minutos).", 403
 
-    # Store user info in session for subsequent requests (chat, dashboard)
     session["name"] = name
     session["email"] = email
-    session["token"] = token # Store token for dashboard validation
+    session["token"] = token 
 
     return render_template("selector.html", name=name, email=email)
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    # Retrieve user info from session or form
     name = request.form.get("name") or session.get("name")
     email = request.form.get("email") or session.get("email")
     scenario = request.form["scenario"] if "scenario" in request.form else session.get("scenario")
+    token = session.get("token") # Obtener el token de la sesión
 
-    if not name or not email or not scenario:
-        # If any essential data is missing, redirect to index or login
+    if not name or not email or not scenario or not token: # Asegurarse de que el token también esté presente
         return redirect(url_for('index'))
 
-    # Update session with current scenario if it came from form
     session["scenario"] = scenario
 
     now = datetime.now()
@@ -342,29 +282,29 @@ def chat():
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
-    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds)
+    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds, token=token) # Pasar el token a la plantilla
 
-@app.route("/dashboard", methods=["GET", "POST"]) # Allow GET for direct access from end_session
+@app.route("/dashboard", methods=["GET", "POST"]) 
 def dashboard():
     name = request.form.get("name") or session.get("name")
     email = request.form.get("email") or session.get("email")
-    token = request.form.get("token") or session.get("token") # Try form first, then session
-    print(f"DEBUG: Dashboard access - Name: {name}, Email: {email}, Token: {token}") # ADD THIS LINE
+    token = request.form.get("token") or session.get("token") 
+    print(f"DEBUG: Dashboard access - Name: {name}, Email: {email}, Token: {token}") 
     today = date.today().isoformat()
 
     if not name or not email or not token:
-        print(f"DEBUG: Redirecting to index. Missing data: Name={name}, Email={email}, Token={token}") # ADD THIS LINE
-        return redirect(url_for('index')) # Redirect if session data is missing
+        print(f"DEBUG: Redirecting to index. Missing data: Name={name}, Email={email}, Token={token}") 
+        return redirect(url_for('index')) 
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT start_date, end_date, active, token FROM users WHERE email = ?", (email,))
     row = c.fetchone()
-    conn.close() # Close connection after fetch
+    conn.close() 
 
     if not row:
         return "Usuario no registrado. Contacta a RH.", 403
-    if not row[2]: # active status
+    if not row[2]: 
         return "Usuario inactivo. Contacta a RH.", 403
     if not (row[0] <= today <= row[1]):
         return "Acceso fuera de rango permitido.", 403
@@ -373,29 +313,26 @@ def dashboard():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    conn = sqlite3.connect(DB_PATH) # Re-open for this query
+    conn = sqlite3.connect(DB_PATH) 
     c = conn.cursor()
     c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
-    max_seconds = 1800 # 30 minutes limit
+    max_seconds = 1800 
 
-    # Re-fetch records using the proper columns (including 'tip' and 'visual_feedback')
     c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip, visual_feedback FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
     records = c.fetchall()
     conn.close()
 
-    if used_seconds >= max_seconds and request.method == "POST": # Only block POST if limit reached
-        # If coming from chat, it might already be at limit, allow dashboard view but no new sessions
-        pass # Allow viewing dashboard even if limit is reached. The 'chat' route will block new sessions.
+    if used_seconds >= max_seconds and request.method == "POST": 
+        pass 
 
     return render_template("dashboard.html", name=name, email=email, records=records, used_seconds=used_seconds, max_seconds=max_seconds)
 
-@app.route("/video/<path:filename>") # Cambiar a path para manejar URLs completas si es necesario
+@app.route("/video/<path:filename>") 
 def serve_video(filename):
-    # Opción 1: Redirigir directamente a la URL de S3 (más eficiente)
     s3_video_url = f"https://{AWS_S3_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{filename}"
     print(f"[SERVE VIDEO] Redirigiendo a S3: {s3_video_url}")
-    return redirect(s3_video_url, code=302) # Redirección temporal
+    return redirect(s3_video_url, code=302) 
 
 @app.route('/upload_video', methods=['POST'])
 def upload_video():
@@ -412,20 +349,18 @@ def upload_video():
     video_file.save(local_path)
 
     try:
-        # Subir a S3
         s3_key = filename
-        # MODIFICADO: Eliminado ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
         s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key) 
         if not s3_url:
             raise Exception("No se pudo subir el archivo a S3.")
         
         print(f"[S3] Subido a: {s3_url}")
 
-        session["last_video_s3_key"] = s3_key # CAMBIO: Usar un nombre de clave más específico
+        session["last_video_s3_key"] = s3_key 
         print(f"DEBUG: Stored s3_key in session: {session['last_video_s3_key']}")
 
 
-        return jsonify({'status': 'ok', 'video_url': s3_url, 's3_object_key': s3_key}) # ADD s3_object_key
+        return jsonify({'status': 'ok', 'video_url': s3_url, 's3_object_key': s3_key}) 
     except Exception as e:
         print(f"[ERROR] upload_video: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -441,10 +376,8 @@ def log_full_session():
     scenario = data.get("scenario")
     conversation = data.get("conversation", [])
     duration = int(data.get("duration", 0))
-    # video_filename = data.get("video_filename") # ELIMINAR ESTA LÍNEA o no usarla
 
-    # RECUPERAR EL S3_KEY DE LA SESIÓN
-    video_object_key = session.pop("last_video_s3_key", None) # CAMBIO: Recuperar de la sesión y eliminarla
+    video_object_key = session.pop("last_video_s3_key", None) 
     
     if not video_object_key:
         print("[ERROR] log_full_session: No se encontró video_object_key en la sesión.")
@@ -453,33 +386,26 @@ def log_full_session():
             "message": "Error interno: No se pudo encontrar el video subido para procesar."
         }), 500
 
-
-    # Store necessary data for the Celery task
     task_data = {
         "name": name,
         "email": email,
         "scenario": scenario,
         "conversation": conversation,
         "duration": duration,
-        "video_object_key": video_object_key # USAR ESTA VARIABLE
+        "video_object_key": video_object_key 
     }
 
-    # Dispatch the processing to a Celery task asynchronously
     from celery_worker import process_session_video
     task = process_session_video.delay(task_data)
 
     print(f"[CELERY] Task dispatched: {task.id} for user {email}")
 
-    # Return immediate response to frontend
     return jsonify({
         "status": "processing",
         "message": "Tu sesión está siendo analizada. Puedes ver el progreso en tu Dashboard en unos minutos.",
         "task_id": task.id
     })
 
-# ----------------------
-# Admin Routes
-# ----------------------
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
     print(f"DEBUG: Accediendo a /admin. Método HTTP: {request.method}")
@@ -491,7 +417,6 @@ def admin_panel():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # POST: user management
     if request.method == "POST":
         print("DEBUG: Recibida solicitud POST en /admin")
         action = request.form.get("action")
@@ -501,8 +426,8 @@ def admin_panel():
             name = request.form["name"]
             email = request.form["email"]
             start = request.form["start_date"]
-            end = request.form["end_date"] # This was the missing name attribute fix
-            token = secrets.token_hex(8) # Generate a new token
+            end = request.form["end_date"] 
+            token = secrets.token_hex(8) 
             print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
             try:
                 c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
@@ -526,33 +451,25 @@ def admin_panel():
             print(f"[ADMIN] Regenerated token for user: {user_id}")
         conn.commit()
 
-    # Load interactions
-    # audio_path ahora contendrá la URL completa de S3
     c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback
                  FROM interactions
                  ORDER BY timestamp DESC""")
     raw_data = c.fetchall()
 
-    # Process data to parse JSON from evaluation_rh
     processed_data = []
     for row in raw_data:
         try:
-            # Parse the JSON string from evaluation_rh (row[8])
             parsed_rh_evaluation = json.loads(row[8])
         except (json.JSONDecodeError, TypeError):
-            # Handle cases where it's not valid JSON (e.g., old entries or errors)
             parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
 
-        # Convert the tuple to a list to make it mutable, then append the parsed data
         processed_row = list(row)
-        processed_row[8] = parsed_rh_evaluation # Replace the raw string with the parsed JSON object
+        processed_row[8] = parsed_rh_evaluation 
         processed_data.append(processed_row)
 
-    # Load users
     c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
     users = c.fetchall()
 
-    # Calculate minutes used per user
     c.execute("""
         SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
         FROM users u
@@ -574,37 +491,31 @@ def admin_panel():
             "summary": summary
         })
 
-    contracted_minutes = 1050 # Fixed: total contracted minutes for the admin
+    contracted_minutes = 1050 
 
     conn.close()
 
     return render_template(
         "admin.html",
-        data=processed_data, # Pass the processed data
+        data=processed_data, 
         users=users,
         usage_summaries=usage_summaries,
         total_minutes=total_minutes_all_users,
         contracted_minutes=contracted_minutes
     )
 
-@app.route("/end_session", methods=["POST", "GET"]) # Allow GET for simple redirection in some cases
+@app.route("/end_session", methods=["POST", "GET"]) 
 def end_session_redirect():
-    # This route is largely redundant now as the frontend's endSession handles logging
-    # and redirects directly to dashboard after processing.
-    # It can be used for a clean redirection if needed.
     name = session.get("name")
     email = session.get("email")
     if name and email:
-        # Redirect to dashboard, passing name/email via form data for POST, or just rely on session for GET
-        # For a clean redirect, it's better to pass them back to the dashboard route
-        # which will then re-validate and pull from DB/session.
         return redirect(url_for('dashboard', name=name, email=email), code=307 if request.method == "POST" else 302)
     return redirect(url_for('index'))
 
 @app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
 def delete_session(session_id):
     if not session.get("admin"):
-        return redirect("/login") # Ensure only admins can delete
+        return redirect("/login") 
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -614,34 +525,30 @@ def delete_session(session_id):
         c.execute("SELECT audio_path FROM interactions WHERE id = ?", (session_id,))
         row = c.fetchone()
 
-        if row and row[0]: # Check if a record and audio_path (S3 URL) exist
+        if row and row[0]: 
             s3_video_url = row[0]
-            # Extraer el nombre del objeto de S3 de la URL
             s3_object_key = s3_video_url.split('/')[-1]
 
-            # 2. Eliminar el objeto de S3
             try:
                 s3_client.delete_object(Bucket=AWS_S3_BUCKET_NAME, Key=s3_object_key)
                 print(f"[DELETE S3] Successfully deleted S3 object: s3://{AWS_S3_BUCKET_NAME}/{s3_object_key}")
             except ClientError as e:
                 print(f"[DELETE S3 ERROR] Failed to delete S3 object {s3_object_key}: {e}")
-                # Si el archivo no existe en S3, no es un error crítico para la DB.
                 if e.response['Error']['Code'] == 'NoSuchKey':
                     print(f"[DELETE S3 WARNING] S3 object not found at: {s3_object_key} (record will still be deleted)")
                 else:
                     return f"Error al eliminar el video de S3: {str(e)}", 500
 
-            # 3. Eliminar el registro de la base de datos
             c.execute("DELETE FROM interactions WHERE id = ?", (session_id,))
             conn.commit()
             print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
-            return redirect("/admin") # Redirect back to admin panel
+            return redirect("/admin") 
         else:
             print(f"[DELETE ERROR] Session or video path not found for ID: {session_id}")
             return "Sesión no encontrada o sin video asociado.", 404
 
     except Exception as e:
-        conn.rollback() # Rollback changes if an error occurs
+        conn.rollback() 
         print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
         return f"Error al eliminar la sesión: {str(e)}", 500
     finally:
@@ -650,7 +557,3 @@ def delete_session(session_id):
 @app.route("/healthz")
 def health_check():
     return "OK", 200
-
-# The if __name__ == "__main__": block has been removed for deployment with Gunicorn.
-# Gunicorn is responsible for starting the application.
-

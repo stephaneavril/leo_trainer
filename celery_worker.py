@@ -461,6 +461,9 @@ def process_session_video(data):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
+        # CONVERTIR EL DICCIONARIO A CADENA JSON ANTES DE GUARDARLO EN LA DB
+        internal_summary_db = json.dumps(internal_summary, ensure_ascii=False, indent=2)
+
         c.execute("SELECT id FROM interactions WHERE audio_path = ?", (video_object_key,))
         existing_row = c.fetchone()
 
@@ -472,7 +475,7 @@ def process_session_video(data):
                 tip = ?, visual_feedback = ?, audio_path = ?
                 WHERE id = ?""", (
                 name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
-                public_summary, internal_summary, duration, tip_text,
+                public_summary, internal_summary_db, duration, tip_text, # USAR internal_summary_db
                 posture_feedback, final_video_s3_url, interaction_id
             ))
             print(f"[DB] Updated interaction {interaction_id} for {email}, scenario {scenario}.")
@@ -484,7 +487,7 @@ def process_session_video(data):
                 audio_path, visual_feedback
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                 name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
-                public_summary, internal_summary, duration, tip_text,
+                public_summary, internal_summary_db, duration, tip_text, # USAR internal_summary_db
                 final_video_s3_url, posture_feedback
             ))
             print(f"[DB] Inserted new interaction for {email}, scenario {scenario}.")
