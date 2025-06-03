@@ -7,7 +7,6 @@ gunicorn
 pandas
 matplotlib
 opencv-python
-openai-whisper==20231117
 moviepy==1.0.3
 mediapipe
 celery[redis] 

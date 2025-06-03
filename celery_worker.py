@@ -5,14 +5,12 @@ import sqlite3
 from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
+import time # Necesario para esperar la transcripción
 
 from evaluator import evaluate_interaction
-# Importar moviepy ya no es necesario para la extracción de audio, se usa ffmpeg directamente
-# import moviepy.editor as VideoFileClip # Comentado o eliminado
-
 import cv2
 import mediapipe as mp
-import subprocess # Necesario para ejecutar comandos ffmpeg
+import subprocess
 import json
 import secrets
 
@@ -40,14 +38,22 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
-try:
-    import whisper
-    # Cargar el modelo "tiny" para eficiencia en CPU
-    whisper_model = whisper.load_model("tiny")
-    print("\U0001F3A7 Whisper model loaded successfully in Celery worker.")
-except Exception as e:
-    print(f"\U0001F525 Error loading Whisper model in Celery worker: {e}")
-    whisper_model = None
+# Cliente de AWS Transcribe
+transcribe_client = boto3.client(
+    'transcribe',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_S3_REGION_NAME
+)
+
+# Eliminar la carga del modelo Whisper
+# try:
+#     import whisper
+#     whisper_model = whisper.load_model("tiny")
+#     print("\U0001F3A7 Whisper model loaded successfully in Celery worker.")
+# except Exception as e:
+#     print(f"\U0001F525 Error loading Whisper model in Celery worker: {e}")
+#     whisper_model = None
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6378/0")
 
@@ -198,7 +204,7 @@ def analyze_video_posture(video_path):
             summary["frames_total"] += 1
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             # Usar cv2.CascadeClassifier para detección facial
-            faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectMultiScale(gray, 1.3, 5)
+            faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectManyScales(gray, 1.3, 5) # Corregir a detectMultiScale
             if len(faces) > 0:
                 summary["face_detected_frames"] += 1
         cap.release()
@@ -256,12 +262,18 @@ def process_session_video(data):
             final_video_s3_url = "Video_Not_Available_Error"
     
     local_mp4_path = None
-    temp_audio_path = None
+    temp_audio_path = None # Ruta del archivo de audio temporal local
+    s3_audio_key = None # Clave del archivo de audio en S3
 
     if local_webm_path:
         mp4_object_key = video_object_key.replace('.webm', '.mp4')
         local_mp4_path = os.path.join(TEMP_PROCESSING_FOLDER, mp4_object_key)
-        temp_audio_path = os.path.join(TEMP_PROCESSING_FOLDER, f"audio_from_{video_object_key.split('.')[0]}.wav")
+        
+        # Generar un nombre único para el archivo de audio en S3
+        audio_filename_base = os.path.splitext(video_object_key)[0]
+        s3_audio_key = f"audio/{audio_filename_base}.wav" # Guardar audios en una subcarpeta 'audio/' en S3
+        temp_audio_path = os.path.join(TEMP_PROCESSING_FOLDER, f"{audio_filename_base}.wav")
+
 
         print(f"[INFO] Processing local video: {local_webm_path}")
         if convert_webm_to_mp4(local_webm_path, local_mp4_path):
@@ -282,41 +294,72 @@ def process_session_video(data):
             print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
 
         try:
-            if whisper_model:
-                try:
-                    # Usar subprocess para extraer audio directamente con ffmpeg, más eficiente en memoria que moviepy.VideoFileClip
-                    print("[INFO] Extracting audio from video using ffmpeg directly...")
-                    command = [
-                        "ffmpeg", "-i", video_to_process_path,  # Video de entrada
-                        "-vn",                                  # No incluir video
-                        "-acodec", "pcm_s16le",                 # Codec de audio PCM (16-bit, little-endian)
-                        "-ar", "16000",                         # Tasa de muestreo de audio (16 kHz, común para voz)
-                        "-ac", "1",                             # Un canal de audio (mono)
-                        "-y",                                   # Sobreescribir archivo de salida sin preguntar
-                        temp_audio_path                         # Archivo de audio de salida
-                    ]
-                    # Ejecutar el comando de ffmpeg. stdout y stderr se redirigen para evitar saturar los logs
-                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                    print(f"[INFO] Audio extracted to {temp_audio_path}.")
+            # --- Extracción de Audio con FFmpeg y Transcripción con AWS Transcribe ---
+            # Eliminar la lógica de Whisper y reemplazarla por AWS Transcribe
+            # if whisper_model: # Bloque de Whisper eliminado
+            try:
+                # Usar subprocess para extraer audio directamente con ffmpeg
+                print("[INFO] Extracting audio from video using ffmpeg directly...")
+                command = [
+                    "ffmpeg", "-i", video_to_process_path,  # Video de entrada
+                    "-vn",                                  # No incluir video
+                    "-acodec", "pcm_s16le",                 # Codec de audio PCM (16-bit, little-endian)
+                    "-ar", "16000",                         # Tasa de muestreo de audio (16 kHz, común para voz)
+                    "-ac", "1",                             # Un canal de audio (mono)
+                    "-y",                                   # Sobreescribir archivo de salida sin preguntar
+                    temp_audio_path                         # Archivo de audio de salida
+                ]
+                subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                print(f"[INFO] Audio extracted to {temp_audio_path}.")
 
-                    # Verificar si el archivo de audio se creó correctamente y no está vacío
-                    if os.path.exists(temp_audio_path) and os.path.getsize(temp_audio_path) > 0:
-                        transcription_result = whisper_model.transcribe(temp_audio_path)
-                        transcribed_text = transcription_result.get("text", "").strip()
-                        print(f"[INFO] Transcripción de audio exitosa: {transcribed_text[:100]}...")
+                if os.path.exists(temp_audio_path) and os.path.getsize(temp_audio_path) > 0:
+                    # Subir el archivo de audio a S3 para AWS Transcribe
+                    audio_s3_url = upload_file_to_s3(temp_audio_path, AWS_S3_BUCKET_NAME, s3_audio_key)
+                    if not audio_s3_url:
+                        raise Exception("Failed to upload audio to S3 for Transcribe.")
+                    print(f"[S3 UPLOAD] Audio subido a S3: {audio_s3_url}")
+
+                    # Iniciar el trabajo de transcripción con AWS Transcribe
+                    job_name = f"leo-trainer-transcription-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
+                    transcribe_client.start_transcription_job(
+                        TranscriptionJobName=job_name,
+                        Media={'MediaFileUri': audio_s3_url},
+                        MediaFormat='wav', # Asegúrate de que coincida con el formato de salida de ffmpeg
+                        LanguageCode='es-MX' # O el idioma que necesites, ej. 'en-US'
+                    )
+                    print(f"[AWS TRANSCRIBE] Transcripción iniciada: {job_name}")
+
+                    # Esperar a que el trabajo de transcripción finalice
+                    max_attempts = 60 # Esperar hasta 10 minutos (60 * 10 segundos)
+                    for attempt in range(max_attempts):
+                        status = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+                        job_status = status['TranscriptionJob']['TranscriptionJobStatus']
+                        if job_status in ['COMPLETED', 'FAILED']:
+                            break
+                        print(f"[AWS TRANSCRIBE] Estado de la transcripción: {job_status}. Esperando...")
+                        time.sleep(10) # Esperar 10 segundos antes de la siguiente verificación
+
+                    if job_status == 'COMPLETED':
+                        transcript_uri = status['TranscriptionJob']['Transcript']['TranscriptFileUri']
+                        # Descargar el contenido del transcript
+                        transcript_response = requests.get(transcript_uri)
+                        transcript_json = transcript_response.json()
+                        transcribed_text = transcript_json['results']['transcripts'][0]['transcript']
+                        print(f"[AWS TRANSCRIBE] Transcripción completa: {transcribed_text[:100]}...")
                     else:
-                        print("⚠️ No se pudo extraer audio o el archivo de audio está vacío.")
-                        transcribed_text = "Error en transcripción (audio vacío o no extraído)."
-                except subprocess.CalledProcessError as e:
-                    # Captura errores específicos de ffmpeg
-                    print(f"[ERROR] Error durante la extracción de audio con ffmpeg: {e.stderr.decode()}")
-                    transcribed_text = "Error en transcripción (extracción de audio fallida)."
-                except Exception as e:
-                    # Captura otros errores durante la transcripción de Whisper
-                    print(f"[ERROR] Error durante la transcripción de Whisper: {e}")
-                    transcribed_text = "Error en transcripción."
-            else:
-                print("[WARNING] Whisper model not loaded, skipping audio transcription.")
+                        print(f"[AWS TRANSCRIBE ERROR] Transcripción fallida o no completada: {job_status}")
+                        transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
+
+                else:
+                    print("⚠️ No se pudo extraer audio o el archivo de audio está vacío.")
+                    transcribed_text = "Error en transcripción (audio vacío o no extraído)."
+            except subprocess.CalledProcessError as e:
+                print(f"[ERROR] Error durante la extracción de audio con ffmpeg: {e.stderr.decode()}")
+                transcribed_text = "Error en transcripción (extracción de audio fallida)."
+            except Exception as e:
+                print(f"[ERROR] Error durante la transcripción con AWS Transcribe: {e}")
+                transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
+            # Eliminar el bloque 'else: print("[WARNING] Whisper model not loaded...")'
 
             # --- VISUAL ANALYSIS ---
             if video_to_process_path and os.path.exists(video_to_process_path):
@@ -358,13 +401,21 @@ def process_session_video(data):
         posture_feedback = "Análisis visual no realizado (video faltante)."
         final_video_s3_url = "Video_Missing_Error"
 
+    # Limpiar el archivo de audio de S3 después de la transcripción
+    if s3_audio_key:
+        try:
+            s3_client.delete_object(Bucket=AWS_S3_BUCKET_NAME, Key=s3_audio_key)
+            print(f"[CLEANUP] Archivo de audio temporal de S3 eliminado: {s3_audio_key}")
+        except ClientError as e:
+            print(f"[CLEANUP ERROR] Falló la eliminación del archivo de audio de S3 {s3_audio_key}: {e}")
+
     final_user_text = transcribed_text
     leo_dialogue = ""
     
     full_conversation_text = f"Participante: {final_user_text}\nLeo: (No se capturó el diálogo del agente D-ID)"
 
     if not final_user_text.strip():
-        print("[ERROR] No hay texto de usuario para evaluar (transcripción de Whisper vacía).")
+        print("[ERROR] No hay texto de usuario para evaluar (transcripción de AWS Transcribe vacía).")
         public_summary = "Error: No hay contenido de usuario para evaluar."
         internal_summary = json.dumps({"error": "No hay contenido de usuario para evaluar."})
         tip_text = "Asegúrate de que tu micrófono funcione y hables claramente durante la sesión."
