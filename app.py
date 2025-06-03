@@ -12,6 +12,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from celery import Celery
+from celery.result import AsyncResult # Import this!
 from celery_worker import celery_app 
 
 import openai
