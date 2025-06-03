@@ -413,27 +413,16 @@ def upload_video():
     try:
         # Subir a S3
         s3_key = filename
-        # MODIFICADO: Añadido ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
+        # AÑADIDO: ExtraArgs={'ACL': 'public-read'} para hacer el objeto público
         s3_url = upload_file_to_s3(local_path, AWS_S3_BUCKET_NAME, s3_key) 
         if not s3_url:
             raise Exception("No se pudo subir el archivo a S3.")
         
         print(f"[S3] Subido a: {s3_url}")
 
-        session["last_video_filename"] = s3_key
-
-        # REMOVED: Lanzar tarea de procesamiento here. It will be dispatched by log_full_session.
-        # from celery_worker import process_session_video
-        # celery_payload = {
-        #     "name": name,
-        #     "email": email,
-        #     "scenario": "Desconocido", # This is a placeholder, will be updated by log_full_session call
-        #     "duration": 0, # Placeholder, will be updated by log_full_session call
-        #     "conversation": [], # Placeholder, will be updated by log_full_session call
-        #     "video_object_key": s3_key
-        # }
-        # print("[DEBUG] Enviando a Celery:", celery_payload)
-        # process_session_video.delay(celery_payload)
+        # ALMACENAR EL S3_KEY EN LA SESIÓN PARA USO POSTERIOR
+        session["last_video_s3_key"] = s3_key # CAMBIO: Usar un nombre de clave más específico
+        print(f"DEBUG: Stored s3_key in session: {session['last_video_s3_key']}")
 
 
         return jsonify({'status': 'ok', 'video_url': s3_url, 's3_object_key': s3_key}) # ADD s3_object_key
@@ -452,7 +441,18 @@ def log_full_session():
     scenario = data.get("scenario")
     conversation = data.get("conversation", [])
     duration = int(data.get("duration", 0))
-    video_filename = data.get("video_filename") # This is the original .webm filename
+    # video_filename = data.get("video_filename") # ELIMINAR ESTA LÍNEA o no usarla
+
+    # RECUPERAR EL S3_KEY DE LA SESIÓN
+    video_object_key = session.pop("last_video_s3_key", None) # CAMBIO: Recuperar de la sesión y eliminarla
+    
+    if not video_object_key:
+        print("[ERROR] log_full_session: No se encontró video_object_key en la sesión.")
+        return jsonify({
+            "status": "error",
+            "message": "Error interno: No se pudo encontrar el video subido para procesar."
+        }), 500
+
 
     # Store necessary data for the Celery task
     task_data = {
@@ -461,7 +461,7 @@ def log_full_session():
         "scenario": scenario,
         "conversation": conversation,
         "duration": duration,
-        "video_object_key": video_filename # This should be the filename in S3 for the WEBM
+        "video_object_key": video_object_key # USAR ESTA VARIABLE
     }
 
     # Dispatch the processing to a Celery task asynchronously
