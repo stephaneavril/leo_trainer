@@ -152,6 +152,7 @@
     <form id="dashboardForm" action="/dashboard" method="POST">
       <input type="hidden" name="name" value="{{ name }}">
       <input type="hidden" name="email" value="{{ email }}">
+      <input type="hidden" name="token" value="{{ token }}"> {# ESTO ES FUNDAMENTAL, ASEGÚRATE QUE EL VALOR SE ENVÍE #}
       <button id="to-dashboard" type="submit">Ver mi progreso</button>
     </form>
   </div>

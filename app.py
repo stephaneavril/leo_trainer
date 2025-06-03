@@ -295,10 +295,6 @@ def dashboard():
     print(f"DEBUG: Dashboard access - Name: {name}, Email: {email}, Token: {token}") 
     today = date.today().isoformat()
 
-    if not name or not email or not token:
-        print(f"DEBUG: Redirecting to index. Missing data: Name={name}, Email={email}, Token={token}") 
-        return redirect(url_for('index')) 
-
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT start_date, end_date, active, token FROM users WHERE email = ?", (email,))
@@ -313,6 +309,28 @@ def dashboard():
         return "Acceso fuera de rango permitido.", 403
     if row[3] != token:
         return "Token inválido. Verifica con RH.", 403
+
+ #- NUEVA LÓGICA: ESPERAR A LA TAREA DE CELERY ---
+    task_id = session.pop('processing_task_id', None) # Obtiene y borra el task_id de la sesión
+    if task_id:
+        print(f"DEBUG: Dashboard: Waiting for Celery task {task_id} to complete...")
+        from celery.result import AsyncResult # Asegúrate de tener este import al inicio del archivo
+        task = AsyncResult(task_id, app=celery_app)
+        try:
+            # Espera hasta 10 minutos (600 segundos) para que la tarea termine
+            # Esto bloqueará la petición HTTP, pero asegura que los datos estén listos.
+            # Ajusta el timeout si tus tareas pueden ser más largas o más cortas.
+            task.wait(timeout=600)
+            print(f"DEBUG: Dashboard: Celery task {task_id} status: {task.status}")
+            if task.successful():
+                print(f"DEBUG: Dashboard: Celery task {task_id} completed successfully.")
+            else:
+                print(f"DEBUG: Dashboard: Celery task {task_id} failed: {task.info}")
+                # Considera mostrar un mensaje de error al usuario si la tarea falla
+        except Exception as e:
+            print(f"DEBUG: Dashboard: Error waiting for Celery task {task_id}: {e}")
+            # Maneja el error, quizás mostrando un mensaje al usuario
+    # --- FIN NUEVA LÓGICA ---
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -407,6 +425,7 @@ def log_full_session():
     task = process_session_video.delay(task_data)
 
     print(f"[CELERY] Task dispatched: {task.id} for user {email}")
+    session['processing_task_id'] = task.id # ¡Añade esta línea!
 
     return jsonify({
         "status": "processing",
