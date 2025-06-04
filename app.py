@@ -629,54 +629,52 @@ def end_session_redirect():
         return redirect(url_for('dashboard', name=name, email=email), code=307 if request.method == "POST" else 302)
     return redirect(url_for('index'))
 
+# En app.py, busca la función @app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
+# y asegúrate de que su contenido sea EXACTAMENTE este:
+
 @app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
 def delete_session(session_id):
     if not session.get("admin"):
-        return redirect("/login") 
+        return redirect("/login")
 
-    conn = None # Initialize conn
+    conn = None # Inicializamos conn para el bloque finally
     try:
-        conn = get_db_connection() # Use PostgreSQL connection
+        conn = get_db_connection() # CORRECTO: Usamos la función de conexión a PostgreSQL
         c = conn.cursor()
 
-        # 1. Get the video URL from the database
-        # Use %s for placeholder in PostgreSQL
+        # 1. Obtener la URL del video de la base de datos
         c.execute("SELECT audio_path FROM interactions WHERE id = %s", (session_id,))
         row = c.fetchone()
 
-        if row and row[0]: 
+        if row and row[0]: # Si hay una URL de video en la base de datos
             s3_video_url = row[0]
-            s3_object_key = s3_video_url.split('/')[-1]
+            s3_object_key = s3_video_url.split('/')[-1] # Extrae el nombre del archivo de S3
 
             try:
                 s3_client.delete_object(Bucket=AWS_S3_BUCKET_NAME, Key=s3_object_key)
-                print(f"[DELETE S3] Successfully deleted S3 object: s3://{AWS_S3_BUCKET_NAME}/{s3_object_key}")
+                print(f"[DELETE S3] Archivo S3 eliminado con éxito: s3://{AWS_S3_BUCKET_NAME}/{s3_object_key}")
             except ClientError as e:
-                print(f"[DELETE S3 ERROR] Failed to delete S3 object {s3_object_key}: {e}")
+                # Esto maneja errores como que el archivo no exista en S3, pero permite que el registro de DB se elimine
+                print(f"[DELETE S3 ERROR] Falló la eliminación del objeto S3 {s3_object_key}: {e}")
                 if e.response['Error']['Code'] == 'NoSuchKey':
-                    print(f"[DELETE S3 WARNING] S3 object not found at: {s3_object_key} (record will still be deleted)")
-                else:
-                    # Do not return error here, allow DB deletion to proceed if S3 deletion was the only issue
-                    # return f"Error al eliminar el video de S3: {str(e)}", 500
-                    pass 
+                    print(f"[DELETE S3 ADVERTENCIA] Objeto S3 no encontrado: {s3_object_key} (el registro de la base de datos se eliminará de todas formas)")
+                # No lanzamos un error aquí para que la eliminación del registro de DB pueda proceder
+                pass
 
-            # Use %s for placeholder in PostgreSQL
-            c.execute("DELETE FROM interactions WHERE id = %s", (session_id,))
-            conn.commit()
-            print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
-            return redirect("/admin") 
-        else:
-            print(f"[DELETE ERROR] Session or video path not found for ID: {session_id}")
-            return "Sesión no encontrada o sin video asociado.", 404
+        # 2. Eliminar el registro de la interacción de la base de datos
+        c.execute("DELETE FROM interactions WHERE id = %s", (session_id,))
+        conn.commit() # Confirmar los cambios en la base de datos
+        print(f"[DB DELETE] Registro eliminado con éxito para la sesión ID: {session_id}")
+        return redirect("/admin") # Redirigir de nuevo al panel de administración
 
     except Exception as e:
-        print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
-        if conn: # Ensure rollback on error
-            conn.rollback() 
+        print(f"[DELETE ERROR] Falló la eliminación de la sesión {session_id}: {e}")
+        if conn:
+            conn.rollback() # Revertir la transacción si hubo un error en la base de datos
         return f"Error al eliminar la sesión: {str(e)}", 500
     finally:
         if conn:
-            conn.close()
+            conn.close() # Asegurar que la conexión a la base de datos se cierre
 
 @app.route("/test_db")
 def test_db_connection():
