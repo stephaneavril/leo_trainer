@@ -669,4 +669,3 @@ def test_db_connection():
 @app.route("/healthz")
 def health_check():
     return "OK", 200
-}
