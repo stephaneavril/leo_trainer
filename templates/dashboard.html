@@ -213,13 +213,14 @@
 {% endif %}
 
             {% if r[5] %}
-  <div style="background: #f9fbff; border-left: 4px solid #00bfff; padding: 10px; margin-top: 10px; border-radius: 6px;">
+  <div style="background: #f9fbff; border-left: 4px solid #00bfff; padding: 10px; border-radius: 6px;">
     <strong>🧠 Consejo personalizado de Leo:</strong>
     <p style="margin: 5px 0 0 0;">{{ r[5] }}</p>
   </div>
 {% endif %}
 
-            {% if r[3] %}<video controls src="/video/{{ r[3] }}"></video>{% endif %}
+            {# REMOVED: Video display for user dashboard #}
+            {# {% if r[3] %}<video controls src="/video/{{ r[3] }}"></video>{% endif %} #}
           </div>
         {% endfor %}
       {% else %}
