@@ -2,19 +2,19 @@
 
 import os
 import psycopg2
-from urllib.parse import urlparse # Añade esta importación
+from urllib.parse import urlparse
 import json
 import secrets
-import pandas as pd # Mantener si se usa para otras funciones (ej. export)
-import matplotlib.pyplot as plt # Mantener si se usa para otras funciones (ej. gráficos)
+import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime, date
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from celery import Celery
-from celery.result import AsyncResult # Import this!
-from celery_worker import celery_app # Asume que celery_worker.py también se ha actualizado
+from celery.result import AsyncResult
+from celery_worker import celery_app # Asume que celery_worker.py ya está actualizado a PostgreSQL
 
 import openai
 import subprocess 
@@ -57,15 +57,14 @@ def get_db_connection():
     )
     return conn
 
-# Eliminamos DB_PATH de SQLite y su os.makedirs
-# PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") 
-# TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
-# os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True) # Ya no es necesario si la DB no está en disco persistente
-
-# Mantenemos TEMP_PROCESSING_FOLDER para archivos temporales (videos WEBM)
+# --- Configuración de rutas para archivos temporales (¡Usar /tmp para volátiles!) ---
+# /tmp es el lugar estándar para archivos temporales en Linux/Docker, que son efímeros.
 TEMP_PROCESSING_FOLDER = os.getenv("TEMP_PROCESSING_FOLDER", "/tmp/leo_trainer_processing") 
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
+# Eliminar completamente DB_PATH de SQLite, ya no se usará
+# DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db") # REMOVER
+# os.makedirs(os.path.dirname(DB_PATH), exist_ok=True) # REMOVER
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -96,7 +95,7 @@ app.config['UPLOAD_FOLDER'] = TEMP_PROCESSING_FOLDER
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") 
 
-# --- init_db() para PostgreSQL ---
+# --- init_db() para PostgreSQL (CORREGIDO) ---
 def init_db():
     conn = None
     try:
@@ -140,14 +139,13 @@ def init_db():
         if conn:
             conn.close()
 
-# --- patch_db_schema() para PostgreSQL ---
+# --- patch_db_schema() para PostgreSQL (CORREGIDO) ---
 def patch_db_schema():
     conn = None
     try:
         conn = get_db_connection()
         c = conn.cursor()
 
-        # Check and add columns if they don't exist in interactions table
         c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='evaluation_rh'")
         if not c.fetchone():
             c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT;")
@@ -163,7 +161,6 @@ def patch_db_schema():
             c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT;")
             print("Added 'visual_feedback' to interactions table.")
             
-        # Check and add column if it doesn't exist in users table
         c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='token'")
         if not c.fetchone():
             c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE;")
@@ -233,7 +230,8 @@ def analyze_video_posture(video_path):
     """Analyzes video for face detection as a proxy for posture/presence."""
     import mediapipe as mp 
     import cv2 
-    mp_face = mp.solutions.face_detection
+    # Asegúrate de que mediapipe esté instalado y funcional si usas esta parte
+    # mp_face = mp.solutions.face_detection 
     summary = {"frames_total": 0, "face_detected_frames": 0, "error": None}
     try:
         cap = cv2.VideoCapture(video_path)
@@ -242,20 +240,40 @@ def analyze_video_posture(video_path):
             print(f"[ERROR] analyze_video_posture: {summary['error']} {video_path}")
             return summary
 
-        with mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.5) as detector:
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break 
-                summary["frames_total"] += 1
-                results = detector.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                if results.detections:
-                    summary["face_detected_frames"] += 1
+        # Usar cv2.CascadeClassifier para detección facial, es más robusto sin dependencias de hardware
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+
+        frames_to_analyze = min(200, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) 
+
+        if frames_to_analyze == 0:
+            cap.release()
+            return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%" # Devuelve 3 valores
+
+        for _ in range(frames_to_analyze):
+            ret, frame = cap.read()
+            if not ret:
+                break 
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+            if len(faces) > 0:
+                summary["face_detected_frames"] += 1
         cap.release()
     except Exception as e:
         summary["error"] = str(e)
         print(f"[ERROR] Error during video posture analysis: {e}")
-    return summary
+    
+    if summary["frames_total"] > 0:
+        ratio = summary["face_detected_frames"] / summary["frames_total"]
+    else:
+        ratio = 0
+
+    if ratio >= 0.7:
+        return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta", f"{ratio*100:.1f}%"
+    elif ratio > 0:
+        return "⚠️ Asegúrate de mantenerte visible durante toda la sesión.", "Mejorar visibilidad", f"{ratio*100:.1f}%"
+    else:
+        return "❌ No se detectó rostro en el video.", "No detectado", "0.0%"
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -280,6 +298,7 @@ def select():
 
     conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
+    # Usa %s para PostgreSQL
     c.execute("SELECT active, start_date, end_date, token FROM users WHERE email=%s", (email,))
     row = c.fetchone()
     conn.close()
@@ -365,7 +384,6 @@ def dashboard():
     task_id = session.pop('processing_task_id', None) # Obtiene y borra el task_id de la sesión
     if task_id:
         print(f"DEBUG: Dashboard: Waiting for Celery task {task_id} to complete...")
-        # Import AsyncResult está al inicio del archivo
         task = AsyncResult(task_id, app=celery_app)
         try:
             task.wait(timeout=600) # Espera hasta 10 minutos (600 segundos)
@@ -475,7 +493,6 @@ def log_full_session():
     task = process_session_video.delay(task_data)
 
     print(f"[CELERY] Task dispatched: {task.id} for user {email}")
-    session['processing_task_id'] = task.id # ¡Añade esta línea!
 
     return jsonify({
         "status": "processing",
@@ -491,49 +508,42 @@ def admin_panel():
         print("DEBUG: No hay sesión de administrador, redirigiendo a /login")
         return redirect("/login")
 
-    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     if request.method == "POST":
-        print(f"DEBUG: Recibida solicitud POST en /admin - Acción: {request.form.get('action')}") # Más detalle aquí
+        print("DEBUG: Recibida solicitud POST en /admin")
         action = request.form.get("action")
-        # Asegúrate de que el token sea generado aquí también
-        token = secrets.token_hex(8) # Para action="add"
-
+        print(f"DEBUG: Acción del formulario: {action}")
         if action == "add":
             print("DEBUG: Intentando añadir usuario")
             name = request.form["name"]
             email = request.form["email"]
             start = request.form["start_date"]
             end = request.form["end_date"] 
-            # El token debe ser generado antes de usarlo en el try/except
+            token = secrets.token_hex(8) 
             print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
             try:
-                # Usa %s para PostgreSQL
-                c.execute("""INSERT INTO users (name, email, start_date, end_date, active, token)
-                                   VALUES (%s, %s, %s, %s, 1, %s)
-                                   ON CONFLICT (email) DO UPDATE SET
-                                   name = EXCLUDED.name, start_date = EXCLUDED.start_date,
-                                   end_date = EXCLUDED.end_date, active = EXCLUDED.active, token = EXCLUDED.token;
-                                   """, (name, email, start, end, token))
+                c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
+                                   VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
                 conn.commit()
                 print(f"[ADMIN] Added/Updated user: {email}")
             except Exception as e:
-                print(f"ERROR: Falló al insertar/actualizar usuario en DB: {e}")
+                print(f"ERROR: Falló al insertar usuario en DB: {e}")
                 conn.rollback()
                 return f"Error al guardar usuario: {str(e)}", 500
         elif action == "toggle":
             print("DEBUG: Intentando activar/desactivar usuario")
             user_id = int(request.form["user_id"])
-            c.execute("UPDATE users SET active = 1 - active WHERE id = %s", (user_id,))
+            c.execute("UPDATE users SET active = 1 - active WHERE id = ?", (user_id,))
             print(f"[ADMIN] Toggled user active status: {user_id}")
         elif action == "regen_token":
             print("DEBUG: Intentando regenerar token")
             user_id = int(request.form["user_id"])
             new_token = secrets.token_hex(8)
-            c.execute("UPDATE users SET token = %s WHERE id = %s", (new_token, user_id))
+            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
             print(f"[ADMIN] Regenerated token for user: {user_id}")
-        conn.commit() # Ya hecho en cada if/elif, pero una final no daña.
+        conn.commit()
 
     # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
     print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
@@ -549,21 +559,15 @@ def admin_panel():
         try:
             parsed_rh_evaluation = json.loads(row[8])
         except (json.JSONDecodeError, TypeError):
-            # En caso de error, aseguramos que el dict tenga una estructura consistente
-            parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8] if row[8] else "None/Empty"}
+            parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
 
         processed_row = list(row)
         processed_row[8] = parsed_rh_evaluation 
         processed_data.append(processed_row)
 
-    conn = get_db_connection() # ¡Reconexión para asegurar datos frescos si el POST modificó users!
-    c = conn.cursor()
     c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
     users = c.fetchall()
-    conn.close() # Cierra la conexión después de obtener users
 
-    conn = get_db_connection() # ¡Reconexión para la tabla de uso!
-    c = conn.cursor()
     c.execute("""
         SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
         FROM users u
@@ -571,7 +575,6 @@ def admin_panel():
         GROUP BY u.name, u.email
     """)
     usage_rows = c.fetchall()
-    conn.close() # Cierra la conexión
 
     usage_summaries = []
     total_minutes_all_users = 0
@@ -588,6 +591,8 @@ def admin_panel():
 
     contracted_minutes = 1050 
 
+    conn.close()
+
     return render_template(
         "admin.html",
         data=processed_data, 
@@ -602,11 +607,7 @@ def end_session_redirect():
     name = session.get("name")
     email = session.get("email")
     if name and email:
-        # Asegúrate de que el token también se pase si es una redirección POST
-        token = session.get("token") # Asegúrate de que el token está en la sesión
-        # Pasar los datos como query parameters para GET, o como form data para POST 307
-        # En este caso, el JS en chat.html ya hace un POST a /dashboard
-        return redirect(url_for('dashboard', name=name, email=email, token=token), code=307 if request.method == "POST" else 302)
+        return redirect(url_for('dashboard', name=name, email=email), code=307 if request.method == "POST" else 302)
     return redirect(url_for('index'))
 
 @app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
@@ -614,11 +615,12 @@ def delete_session(session_id):
     if not session.get("admin"):
         return redirect("/login") 
 
-    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     try:
-        c.execute("SELECT audio_path FROM interactions WHERE id = %s", (session_id,)) # %s para PostgreSQL
+        # 1. Get the video URL from the database
+        c.execute("SELECT audio_path FROM interactions WHERE id = ?", (session_id,))
         row = c.fetchone()
 
         if row and row[0]: 
@@ -635,7 +637,7 @@ def delete_session(session_id):
                 else:
                     return f"Error al eliminar el video de S3: {str(e)}", 500
 
-            c.execute("DELETE FROM interactions WHERE id = %s", (session_id,)) # %s para PostgreSQL
+            c.execute("DELETE FROM interactions WHERE id = ?", (session_id,))
             conn.commit()
             print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
             return redirect("/admin") 
@@ -648,34 +650,23 @@ def delete_session(session_id):
         print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
         return f"Error al eliminar la sesión: {str(e)}", 500
     finally:
-        if conn: # Asegurarse de que conn existe antes de cerrar
-            conn.close()
+        conn.close()
 
-# --- Ruta test_db_connection() para PostgreSQL ---
 @app.route("/test_db")
 def test_db_connection():
-    conn = None # Inicializar conn a None
     try:
-        conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
+        conn = sqlite3.connect(DB_PATH) # DB_PATH es tu variable global definida arriba
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM interactions")
         count = c.fetchone()[0]
-        c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY id DESC LIMIT 5") # Obtiene algunas columnas para verificar
-        rows_data = c.fetchall() # Obtener las filas
+        c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY timestamp DESC LIMIT 5") # Obtiene algunas columnas para verificar
+        rows = c.fetchall()
         conn.close()
-
-        # Formatear las filas para que se muestren bien en HTML
-        formatted_rows = "<br>".join([str(row) for row in rows_data])
-
-        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {formatted_rows}</p><p>DB_PATH: (Now PostgreSQL, not a file path)</p>"
+        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {rows}</p><p>DB_PATH: {DB_PATH}</p>"
     except Exception as e:
-        print(f"ERROR en /test_db: {e}")
-        return f"<h1>DB Test Error: {e}</h1><p>Check logs for DATABASE_URL or DB connection issues.</p>", 500
-    finally:
-        if conn:
-            conn.close()
-
+        return f"<h1>DB Test Error: {e}</h1><p>DB_PATH: {DB_PATH}</p>", 500
 
 @app.route("/healthz")
 def health_check():
     return "OK", 200
+}

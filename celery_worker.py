@@ -1,17 +1,20 @@
 # celery_worker.py
 
 import os
-import sqlite3 # Mantener temporalmente por si había código específico de SQLite fuera de la conexión principal
+# Elimina la importación de sqlite3, ya no se usará
+# import sqlite3 
 from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
 import time
 import requests
 import cv2
-import mediapipe as mp
+# Quita la importación de mediapipe si no lo usas activamente o no está en requirements.txt del worker
+# import mediapipe as mp 
 import subprocess
 import json
 import secrets
+from evaluator import evaluate_interaction # ¡Asegúrate de que esta línea esté presente!
 
 import boto3
 from botocore.exceptions import ClientError
@@ -22,12 +25,12 @@ from urllib.parse import urlparse
 
 load_dotenv()
 
-# --- Configuración de rutas (TEMP_PROCESSING_FOLDER se mantiene para archivos temporales) ---
-PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data")
-TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
+# --- Configuración de rutas para archivos temporales (¡Ahora /tmp para volátiles!) ---
+# /tmp es el lugar estándar para archivos temporales en Linux/Docker, que son efímeros.
+TEMP_PROCESSING_FOLDER = os.getenv("TEMP_PROCESSING_FOLDER", "/tmp/leo_trainer_processing") 
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
-# Eliminar DB_PATH de SQLite, ya no se usará
+# Eliminar cualquier referencia a DB_PATH de SQLite, ya no se usará
 # DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
 # os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -86,11 +89,11 @@ def get_db_connection():
     )
     return conn
 
-# --- init_db() para PostgreSQL ---
+# --- init_db() para PostgreSQL (¡CORREGIDO: Usando get_db_connection()!) ---
 def init_db():
     conn = None
     try:
-        conn = get_db_connection()
+        conn = get_db_connection() # ¡CORREGIDO!
         c = conn.cursor()
         c.execute('''
             CREATE TABLE IF NOT EXISTS interactions (
@@ -130,11 +133,11 @@ def init_db():
         if conn:
             conn.close()
 
-# --- patch_db_schema() para PostgreSQL ---
+# --- patch_db_schema() para PostgreSQL (¡CORREGIDO: Usando get_db_connection()!) ---
 def patch_db_schema():
     conn = None
     try:
-        conn = get_db_connection()
+        conn = get_db_connection() # ¡CORREGIDO!
         c = conn.cursor()
 
         c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='evaluation_rh'")
@@ -213,25 +216,29 @@ def convert_webm_to_mp4(input_path, output_path):
         print(f"[FFMPEG ERROR] Unexpected error during conversion: {e}")
         return False
 
+# La función analyze_video_posture está bien, ya devuelve 3 valores.
+# No necesita cambios aquí si ya funciona como esperaba.
 def analyze_video_posture(video_path):
-    mp_face = mp.solutions.face_detection
+    # Ya no importamos mediapipe globalmente. Si se usa, debe importarse aquí.
+    # Si mp.solutions.face_detection no se usa o falla, cv2.CascadeClassifier se usará como fallback.
+    # Removí `mp_face = mp.solutions.face_detection` del cuerpo principal si no se usa.
+
     summary = {"frames_total": 0, "face_detected_frames": 0, "error": None}
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             summary["error"] = "Could not open video file."
             print(f"[ERROR] analyze_video_posture: {summary['error']} {video_path}")
-            return summary
+            return "⚠️ No se pudo abrir el archivo de video para análisis visual.", "Error en video", "N/A" # Devuelve 3 valores
 
-        # Usar cv2.CascadeClassifier para detección facial, ya que MediaPipe no está en requirements.txt del worker
-        # y es más simple para este caso de uso básico de detección de rostro
+        # Usar cv2.CascadeClassifier para detección facial, es más robusto sin dependencias de hardware
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-        frames_to_analyze = min(200, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) # Limitar frames a analizar para rendimiento
+        frames_to_analyze = min(200, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) 
 
         if frames_to_analyze == 0:
             cap.release()
-            return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%"
+            return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%" # Devuelve 3 valores
 
         for _ in range(frames_to_analyze):
             ret, frame = cap.read()
@@ -255,7 +262,7 @@ def analyze_video_posture(video_path):
         else:
             return "❌ No se detectó rostro en el video.", "No detectado", "0.0%"
     except Exception as e:
-        return f"⚠️ Error en análisis visual: {str(e)}", "Error", "N/A"
+        return f"⚠️ Error en análisis visual: {str(e)}", "Error", "N/A" # Devuelve 3 valores
 
 
 def compress_video_for_ai(input_path, output_path):
@@ -289,11 +296,13 @@ def process_session_video(data):
     public_summary = "Evaluación no disponible."
     internal_summary = "Evaluación no disponible."
     tip_text = "Consejo no disponible."
-    posture_feedback = "Análisis visual no realizado."
+    posture_feedback = "Análisis visual no realizado." # Inicializamos para el caso de no video
     final_video_s3_url = None
 
     if not video_object_key:
         print("[ERROR] process_session_video: No se recibió video_object_key.")
+        # Aseguramos que posture_feedback tenga un valor si no hay video
+        posture_feedback = "Análisis visual no realizado (video no proporcionado)." 
         return {"status": "error", "error": "No se recibió el nombre del objeto de video de S3."}
 
     local_webm_path = os.path.join(TEMP_PROCESSING_FOLDER, video_object_key)
@@ -304,12 +313,13 @@ def process_session_video(data):
             print(f"[ERROR] process_session_video: No se pudo encontrar/descargar el video WEBM: {video_object_key}")
             local_webm_path = None
             final_video_s3_url = "Video_Not_Available_Error"
+            posture_feedback = "Análisis visual no realizado (video no disponible)." # Actualizamos si la descarga falla
     
     local_mp4_path = None
     temp_audio_path = None
     s3_audio_key = None
 
-    if local_webm_path:
+    if local_webm_path: # Solo proceder si el webm está disponible o se descargó
         mp4_object_key = video_object_key.replace('.webm', '.mp4')
         local_mp4_path = os.path.join(TEMP_PROCESSING_FOLDER, mp4_object_key)
         
@@ -333,6 +343,7 @@ def process_session_video(data):
         else:
             video_to_process_path = local_webm_path
             print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
+            posture_feedback = "Análisis visual no realizado (falló la conversión de video)." # Actualizamos si la conversión falla
 
         try:
             print("[INFO] Extracting audio from video using ffmpeg directly...")
@@ -392,10 +403,11 @@ def process_session_video(data):
             print(f"[ERROR] Error durante la transcripción con AWS Transcribe: {e}")
             transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
 
+        # Llamada a analyze_video_posture (si hay un video para procesar)
         if video_to_process_path and os.path.exists(video_to_process_path):
             try:
                 print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
-                # Llamada a analyze_video_posture que ya devuelve el feedback y la evaluación interna
+                # analyze_video_posture devuelve 3 valores (feedback público, eval interna, porcentaje)
                 visual_feedback_public, visual_eval_internal, visual_pct = analyze_video_posture(video_to_process_path)
                 posture_feedback = visual_feedback_public # Usar el feedback público
                 print(f"[POSTURA] {posture_feedback}")
@@ -403,18 +415,20 @@ def process_session_video(data):
                 posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
                 print(f"[ERROR] Unexpected error in visual analysis: {e}")
         else:
-            print(f"[WARNING] Skipping visual analysis: Processed video file not found at {video_to_process_path}")
-            posture_feedback = "Video no disponible para análisis visual."
+            # Esto ya debería estar cubierto por los checks de local_webm_path al principio
+            # pero lo mantenemos para claridad
+            posture_feedback = "Análisis visual no realizado (video no disponible para análisis)."
 
+        # Subir MP4 final a S3
         if local_mp4_path and os.path.exists(local_mp4_path):
             final_video_s3_url = upload_file_to_s3(local_mp4_path, AWS_S3_BUCKET_NAME, mp4_object_key)
             if not final_video_s3_url:
                 print(f"[ERROR] Falló la subida del MP4 final a S3: {local_mp4_path}")
         else:
-            print(f"[WARNING] No se generó archivo MP4 local para subir a S3: {local_mp4_path}")
             final_video_s3_url = "Video_Processing_Failed"
+            print(f"[WARNING] No se generó archivo MP4 local para subir a S3: {local_mp4_path}")
 
-    else:
+    else: # Si local_webm_path era None desde el principio (video_object_key faltante o descarga fallida)
         print("[WARNING] Skipping all video processing (conversion, transcription, visual analysis, S3 upload) due to missing WEBM file.")
         transcribed_text = "Transcripción no disponible (video faltante)."
         posture_feedback = "Análisis visual no realizado (video faltante)."
@@ -437,27 +451,26 @@ def process_session_video(data):
     if not final_user_text.strip():
         print("[ERROR] No hay texto de usuario para evaluar (transcripción de AWS Transcribe vacía).")
         public_summary = "Error: No hay contenido de usuario para evaluar."
-        internal_summary = json.dumps({"error": "No hay contenido de usuario para evaluar."})
+        internal_summary_db = json.dumps({"error": "No hay contenido de usuario para evaluar (transcripción vacía)."}) # Aseguramos formato JSON
         tip_text = "Asegúrate de que tu micrófono funcione y hables claramente durante la sesión."
     else:
         try:
-            # evaluator.py ya devuelve la evaluación pública y la interna estructurada
             summaries = evaluate_interaction(final_user_text, leo_dialogue, video_to_process_path if video_to_process_path and os.path.exists(video_to_process_path) else None)
             
             print(f"DEBUG: Tipo de summaries después de evaluate_interaction: {type(summaries)}")
             print(f"DEBUG: Contenido de summaries después de evaluate_interaction: {summaries}")
 
             public_summary = summaries.get("public", public_summary)
-            internal_summary_dict = summaries.get("internal", {}) # Obtener el diccionario
+            internal_summary_dict = summaries.get("internal", {})
             if "error" in internal_summary_dict:
-                public_summary = "⚠️ Evaluación automática no disponible."
-                internal_summary_db = json.dumps({"error": internal_summary_dict.get("error", "Error desconocido en evaluación.")})
+                public_summary = "⚠️ Evaluación automática no disponible (error interno)."
+                internal_summary_db = json.dumps({"error": internal_summary_dict.get("error", "Error desconocido durante la evaluación AI.")})
             else:
-                internal_summary_db = json.dumps(internal_summary_dict, ensure_ascii=False, indent=2) # Convertir a JSON string
+                internal_summary_db = json.dumps(internal_summary_dict, ensure_ascii=False, indent=2)
             
             print(f"[INFO] AI Evaluation successful. Public: {public_summary[:50]}...")
         except Exception as e:
-            public_summary = "⚠️ Evaluación automática no disponible."
+            public_summary = "⚠️ Evaluación automática no disponible (falló la llamada a la IA)."
             internal_summary_db = json.dumps({"error": f"Error al llamar a evaluate_interaction: {str(e)}"})
             print(f"[ERROR] Error calling evaluate_interaction: {e}")
 
@@ -480,19 +493,10 @@ def process_session_video(data):
 
     conn = None # Inicializar conn para el bloque finally
     try:
-        conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
+        conn = get_db_connection() # ¡CORREGIDO: Usando get_db_connection() para PostgreSQL!
         c = conn.cursor()
         
-        # Primero intenta obtener la ID existente, para UPDATE en lugar de INSERT
-        # Si la tabla ya existe y tiene un audio_path único, intenta encontrarlo
-        # Si no, siempre inserta. Es más común que las tareas Celery inserten una vez.
-        # c.execute("SELECT id FROM interactions WHERE audio_path = %s", (video_object_key,))
-        # existing_row = c.fetchone()
-
-        # Si no estás haciendo un UPDATE basado en audio_path, puedes simplemente INSERTAR siempre
-        # o gestionar la lógica de UPDATE/INSERT basada en un ID de sesión más estable
-        # Para la prueba, simplemente INSERTAR es lo más sencillo si cada sesión es nueva
-
+        # Usamos INSERT con %s para PostgreSQL
         c.execute("""INSERT INTO interactions (
                 name, email, scenario, message, response, timestamp,
                 evaluation, evaluation_rh, duration_seconds, tip,
@@ -534,7 +538,7 @@ def process_session_video(data):
         "full_conversation_text": full_conversation_text,
         "leo_dialogue": leo_dialogue,
         "timestamp": timestamp,
-        "internal_summary": internal_summary_db, # Retornar el JSON string ya preparado
+        "internal_summary": internal_summary_db,
         "duration": duration,
         "name": name,
         "email": email
