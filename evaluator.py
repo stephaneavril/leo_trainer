@@ -38,30 +38,27 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             if not cap.isOpened():
                 return "⚠️ No se pudo abrir el archivo de video para análisis visual.", "Error en video", "N/A"
 
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             frontal_frames = 0
+            total_frames_processed = 0 # Initialize a counter for processed frames
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-            frames_to_analyze = min(200, frame_count) # Limit frames to analyze for performance
+            max_frames_to_check = 200 # Limit frames to analyze for performance
 
-            if frames_to_analyze == 0:
-                cap.release()
-                return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%"
-
-            for _ in range(frames_to_analyze):
+            for _ in range(max_frames_to_check): # Loop up to max_frames_to_check
                 ret, frame = cap.read()
-                if not ret:
+                if not ret: # Break if no more frames or error
                     break
+                total_frames_processed += 1 # Increment only if a frame was successfully read
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 faces = face_cascade.detectMultiScale(gray, 1.3, 5)
                 if len(faces) > 0:
                     frontal_frames += 1
             cap.release()
             
-            if frontal_frames > 0:
-                ratio = frontal_frames / frames_to_analyze
-            else:
-                ratio = 0
+            if total_frames_processed == 0: # Check if any frames were processed
+                return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%"
+
+            ratio = frontal_frames / total_frames_processed # Use correctly counted frames for ratio
 
             if ratio >= 0.7:
                 return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta", f"{ratio*100:.1f}%"
