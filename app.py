@@ -238,7 +238,7 @@ def analyze_video_posture(video_path):
         if not cap.isOpened():
             summary["error"] = "Could not open video file."
             print(f"[ERROR] analyze_video_posture: {summary['error']} {video_path}")
-            return summary
+            return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%" # Devuelve 3 valores
 
         # Usar cv2.CascadeClassifier para detección facial, es más robusto sin dependencias de hardware
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -508,90 +508,109 @@ def admin_panel():
         print("DEBUG: No hay sesión de administrador, redirigiendo a /login")
         return redirect("/login")
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = None # Initialize conn
+    try:
+        conn = get_db_connection() # Use PostgreSQL connection
+        c = conn.cursor()
 
-    if request.method == "POST":
-        print("DEBUG: Recibida solicitud POST en /admin")
-        action = request.form.get("action")
-        print(f"DEBUG: Acción del formulario: {action}")
-        if action == "add":
-            print("DEBUG: Intentando añadir usuario")
-            name = request.form["name"]
-            email = request.form["email"]
-            start = request.form["start_date"]
-            end = request.form["end_date"] 
-            token = secrets.token_hex(8) 
-            print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
+        if request.method == "POST":
+            print("DEBUG: Recibida solicitud POST en /admin")
+            action = request.form.get("action")
+            print(f"DEBUG: Acción del formulario: {action}")
+            if action == "add":
+                print("DEBUG: Intentando añadir usuario")
+                name = request.form["name"]
+                email = request.form["email"]
+                start = request.form["start_date"]
+                end = request.form["end_date"] 
+                token = secrets.token_hex(8) 
+                print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
+                try:
+                    # Use ON CONFLICT for UPSERT behavior in PostgreSQL
+                    c.execute("""INSERT INTO users (name, email, start_date, end_date, active, token)
+                                       VALUES (%s, %s, %s, %s, 1, %s)
+                                       ON CONFLICT (email) DO UPDATE SET
+                                       name = EXCLUDED.name,
+                                       start_date = EXCLUDED.start_date,
+                                       end_date = EXCLUDED.end_date,
+                                       active = EXCLUDED.active,
+                                       token = EXCLUDED.token;""", (name, email, start, end, token))
+                    conn.commit()
+                    print(f"[ADMIN] Added/Updated user: {email}")
+                except Exception as e:
+                    print(f"ERROR: Falló al insertar usuario en DB: {e}")
+                    if conn:
+                        conn.rollback()
+                    return f"Error al guardar usuario: {str(e)}", 500
+            elif action == "toggle":
+                print("DEBUG: Intentando activar/desactivar usuario")
+                user_id = int(request.form["user_id"])
+                # Use %s for placeholder in PostgreSQL
+                c.execute("UPDATE users SET active = 1 - active WHERE id = %s", (user_id,))
+                print(f"[ADMIN] Toggled user active status: {user_id}")
+            elif action == "regen_token":
+                print("DEBUG: Intentando regenerar token")
+                user_id = int(request.form["user_id"])
+                new_token = secrets.token_hex(8)
+                # Use %s for placeholder in PostgreSQL
+                c.execute("UPDATE users SET token = %s WHERE id = %s", (new_token, user_id))
+                print(f"[ADMIN] Regenerated token for user: {user_id}")
+            conn.commit()
+
+        # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
+        print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
+        c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback
+                         FROM interactions
+                         ORDER BY timestamp DESC""")
+        raw_data = c.fetchall()
+        print(f"DEBUG: Admin Panel Query Result - Fetched {len(raw_data)} raw data entries.")
+        # --- END DEBUGGING PRINTS ---
+
+        processed_data = []
+        for row in raw_data:
             try:
-                c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
-                                   VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
-                conn.commit()
-                print(f"[ADMIN] Added/Updated user: {email}")
-            except Exception as e:
-                print(f"ERROR: Falló al insertar usuario en DB: {e}")
-                conn.rollback()
-                return f"Error al guardar usuario: {str(e)}", 500
-        elif action == "toggle":
-            print("DEBUG: Intentando activar/desactivar usuario")
-            user_id = int(request.form["user_id"])
-            c.execute("UPDATE users SET active = 1 - active WHERE id = ?", (user_id,))
-            print(f"[ADMIN] Toggled user active status: {user_id}")
-        elif action == "regen_token":
-            print("DEBUG: Intentando regenerar token")
-            user_id = int(request.form["user_id"])
-            new_token = secrets.token_hex(8)
-            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
-            print(f"[ADMIN] Regenerated token for user: {user_id}")
-        conn.commit()
+                parsed_rh_evaluation = json.loads(row[8])
+            except (json.JSONDecodeError, TypeError):
+                parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
 
-    # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
-    print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
-    c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback
-                     FROM interactions
-                     ORDER BY timestamp DESC""")
-    raw_data = c.fetchall()
-    print(f"DEBUG: Admin Panel Query Result - Fetched {len(raw_data)} raw data entries.")
-    # --- END DEBUGGING PRINTS ---
+            processed_row = list(row)
+            processed_row[8] = parsed_rh_evaluation 
+            processed_data.append(processed_row)
 
-    processed_data = []
-    for row in raw_data:
-        try:
-            parsed_rh_evaluation = json.loads(row[8])
-        except (json.JSONDecodeError, TypeError):
-            parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
+        c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
+        users = c.fetchall()
 
-        processed_row = list(row)
-        processed_row[8] = parsed_rh_evaluation 
-        processed_data.append(processed_row)
+        c.execute("""
+            SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
+            FROM users u
+            LEFT JOIN interactions i ON u.email = i.email
+            GROUP BY u.name, u.email
+        """)
+        usage_rows = c.fetchall()
 
-    c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
-    users = c.fetchall()
+        usage_summaries = []
+        total_minutes_all_users = 0
+        for name_u, email_u, secs in usage_rows:
+            mins = secs // 60
+            total_minutes_all_users += mins
+            summary = "Buen desempeño general" if mins >= 15 else "Actividad moderada" if mins >= 5 else "Poca actividad, se sugiere seguimiento"
+            usage_summaries.append({
+                "name": name_u,
+                "email": email_u,
+                "minutes": mins,
+                "summary": summary
+            })
 
-    c.execute("""
-        SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
-        FROM users u
-        LEFT JOIN interactions i ON u.email = i.email
-        GROUP BY u.name, u.email
-    """)
-    usage_rows = c.fetchall()
+        contracted_minutes = 1050 
 
-    usage_summaries = []
-    total_minutes_all_users = 0
-    for name_u, email_u, secs in usage_rows:
-        mins = secs // 60
-        total_minutes_all_users += mins
-        summary = "Buen desempeño general" if mins >= 15 else "Actividad moderada" if mins >= 5 else "Poca actividad, se sugiere seguimiento"
-        usage_summaries.append({
-            "name": name_u,
-            "email": email_u,
-            "minutes": mins,
-            "summary": summary
-        })
-
-    contracted_minutes = 1050 
-
-    conn.close()
+    except Exception as e:
+        print(f"\U0001F525 Error in admin_panel (PostgreSQL): {e}")
+        if conn:
+            conn.rollback()
+        return f"Error en el panel de administración: {str(e)}", 500
+    finally:
+        if conn:
+            conn.close()
 
     return render_template(
         "admin.html",
@@ -615,12 +634,14 @@ def delete_session(session_id):
     if not session.get("admin"):
         return redirect("/login") 
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
+    conn = None # Initialize conn
     try:
+        conn = get_db_connection() # Use PostgreSQL connection
+        c = conn.cursor()
+
         # 1. Get the video URL from the database
-        c.execute("SELECT audio_path FROM interactions WHERE id = ?", (session_id,))
+        # Use %s for placeholder in PostgreSQL
+        c.execute("SELECT audio_path FROM interactions WHERE id = %s", (session_id,))
         row = c.fetchone()
 
         if row and row[0]: 
@@ -635,9 +656,12 @@ def delete_session(session_id):
                 if e.response['Error']['Code'] == 'NoSuchKey':
                     print(f"[DELETE S3 WARNING] S3 object not found at: {s3_object_key} (record will still be deleted)")
                 else:
-                    return f"Error al eliminar el video de S3: {str(e)}", 500
+                    # Do not return error here, allow DB deletion to proceed if S3 deletion was the only issue
+                    # return f"Error al eliminar el video de S3: {str(e)}", 500
+                    pass 
 
-            c.execute("DELETE FROM interactions WHERE id = ?", (session_id,))
+            # Use %s for placeholder in PostgreSQL
+            c.execute("DELETE FROM interactions WHERE id = %s", (session_id,))
             conn.commit()
             print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
             return redirect("/admin") 
@@ -646,25 +670,28 @@ def delete_session(session_id):
             return "Sesión no encontrada o sin video asociado.", 404
 
     except Exception as e:
-        conn.rollback() 
         print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
+        if conn: # Ensure rollback on error
+            conn.rollback() 
         return f"Error al eliminar la sesión: {str(e)}", 500
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @app.route("/test_db")
 def test_db_connection():
+    conn = None # Initialize conn
     try:
-        conn = sqlite3.connect(DB_PATH) # DB_PATH es tu variable global definida arriba
+        conn = get_db_connection() # Use PostgreSQL connection
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM interactions")
         count = c.fetchone()[0]
         c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY timestamp DESC LIMIT 5") # Obtiene algunas columnas para verificar
         rows = c.fetchall()
         conn.close()
-        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {rows}</p><p>DB_PATH: {DB_PATH}</p>"
+        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {rows}</p><p>DB_URL: {os.getenv('DATABASE_URL')}</p>" # Changed DB_PATH to DB_URL
     except Exception as e:
-        return f"<h1>DB Test Error: {e}</h1><p>DB_PATH: {DB_PATH}</p>", 500
+        return f"<h1>DB Test Error: {e}</h1><p>DB_URL: {os.getenv('DATABASE_URL')}</p>", 500
 
 @app.route("/healthz")
 def health_check():
