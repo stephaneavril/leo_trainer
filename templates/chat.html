@@ -140,7 +140,7 @@
   </div>
 
   <button id="end-btn">Finalizar sesión</button>
-  <div id="timer">Duración: 05:00</div>
+  <div id="timer">Duración: 03:00</div> {# Initial display set to 03:00 #}
 
   <div id="summary-box" style="display:none;">
     <h2>✅ Resumen de desempeño</h2>
@@ -199,8 +199,9 @@
       const name = "{{ name }}";
       const email = "{{ email }}";
       const scenario = "{{ scenario }}";
-      const usedSeconds = parseInt("{{ used_seconds|default(0) }}");
-      const remainingTime = Math.max(300 - usedSeconds, 0); // 5 minutes total
+      // The `used_seconds` from the server is still needed to track the monthly cap.
+      // const usedSeconds = parseInt("{{ used_seconds|default(0) }}"); // Kept as it is used to calculate monthly total
+      // const remainingTime = Math.max(300 - usedSeconds, 0); // REMOVED: No longer carry over time
 
       const endBtn = document.getElementById("end-btn");
       const status = document.getElementById("status");
@@ -209,7 +210,7 @@
 
       let recorder, chunks = [], stream;
       let sessionEnded = false;
-      let countdown = remainingTime;
+      let countdown = 180; // FIXED: Each session starts with 3 minutes (180 seconds)
       let interval;
 
       const updateTimer = (duration) => {
@@ -223,7 +224,7 @@
         sessionEnded = true;
         clearInterval(interval); // Stop the countdown timer
 
-        const duration = 300 - countdown; // Calculate actual session duration (for 5 minutes)
+        const duration = 180 - countdown; // Calculate actual session duration (for a 3-minute session)
         document.getElementById("recording-indicator")?.remove();
         endBtn.disabled = true;
         endBtn.textContent = "Finalizando sesión..."; // Updated text
