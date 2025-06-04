@@ -1,14 +1,12 @@
 # celery_worker.py
 
 import os
-import sqlite3
+import sqlite3 # Mantener temporalmente por si había código específico de SQLite fuera de la conexión principal
 from datetime import datetime, date
 from celery import Celery
 from dotenv import load_dotenv
-import time # Necesario para esperar la transcripción
-import requests # Necesario para descargar el transcript de AWS Transcribe
-
-from evaluator import evaluate_interaction
+import time
+import requests
 import cv2
 import mediapipe as mp
 import subprocess
@@ -18,14 +16,20 @@ import secrets
 import boto3
 from botocore.exceptions import ClientError
 
+# --- Nuevas importaciones para PostgreSQL ---
+import psycopg2
+from urllib.parse import urlparse
+
 load_dotenv()
 
+# --- Configuración de rutas (TEMP_PROCESSING_FOLDER se mantiene para archivos temporales) ---
 PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data")
-TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing")
+TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
 
-DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+# Eliminar DB_PATH de SQLite, ya no se usará
+# DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
+# os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -39,22 +43,12 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
-# Cliente de AWS Transcribe
 transcribe_client = boto3.client(
     'transcribe',
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=AWS_S3_REGION_NAME
 )
-
-# Eliminar la carga del modelo Whisper
-# try:
-#     import whisper
-#     whisper_model = whisper.load_model("tiny")
-#     print("\U0001F3A7 Whisper model loaded successfully in Celery worker.")
-# except Exception as e:
-#     print(f"\U0001F525 Error loading Whisper model in Celery worker: {e}")
-#     whisper_model = None
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6378/0")
 
@@ -75,65 +69,105 @@ celery_app.conf.update(
     enable_utc=False,
 )
 
+# --- Configuración de conexión a PostgreSQL (similar a app.py) ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set!")
+
+def get_db_connection():
+    parsed_url = urlparse(DATABASE_URL)
+    conn = psycopg2.connect(
+        database=parsed_url.path[1:],
+        user=parsed_url.username,
+        password=parsed_url.password,
+        host=parsed_url.hostname,
+        port=parsed_url.port,
+        sslmode='require'
+    )
+    return conn
+
+# --- init_db() para PostgreSQL ---
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT,
-        scenario TEXT,
-        message TEXT,           -- Full conversation text
-        response TEXT,          -- Leo's responses consolidated
-        audio_path TEXT,        -- URL del video en S3 (will be updated by Celery task)
-        timestamp TEXT,
-        evaluation TEXT,        -- Public summary from GPT (will be updated by Celery task)
-        evaluation_rh TEXT,     -- Internal/RH summary from GPT (will be updated by Celery task)
-        duration_seconds INTEGER DEFAULT 0,
-        tip TEXT,               -- Personalized tip from GPT (will be updated by Celery task)
-        visual_feedback TEXT    -- Feedback from video analysis (will be updated by Celery task)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT UNIQUE,
-        start_date TEXT,
-        end_date TEXT,
-        active INTEGER DEFAULT 1,
-        token TEXT UNIQUE -- Unique token for user access
-    )''')
-    conn.commit()
-    conn.close()
-    print("\U0001F4C3 Database initialized or already exists in worker.")
+    conn = None
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                email TEXT,
+                scenario TEXT,
+                message TEXT,
+                response TEXT,
+                audio_path TEXT,
+                timestamp TEXT,
+                evaluation TEXT,
+                evaluation_rh TEXT,
+                duration_seconds INTEGER DEFAULT 0,
+                tip TEXT,
+                visual_feedback TEXT
+            );
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                email TEXT UNIQUE,
+                start_date TEXT,
+                end_date TEXT,
+                active INTEGER DEFAULT 1,
+                token TEXT UNIQUE
+            );
+        ''')
+        conn.commit()
+        print("\U0001F4C3 Database initialized or already exists in worker (PostgreSQL).")
+    except Exception as e:
+        print(f"\U0001F525 Error initializing PostgreSQL database in worker: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
+# --- patch_db_schema() para PostgreSQL ---
 def patch_db_schema():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
 
-    c.execute("PRAGMA table_info(interactions)")
-    columns = [col[1] for col in c.fetchall()]
-    if 'evaluation_rh' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
-        print("Added 'evaluation_rh' to interactions table in worker.")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='evaluation_rh'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT;")
+            print("Added 'evaluation_rh' to interactions table in worker.")
 
-    if 'tip' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
-        print("Added 'tip' to interactions table in worker.")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='tip'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT;")
+            print("Added 'tip' to interactions table in worker.")
 
-    if 'visual_feedback' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
-        print("Added 'visual_feedback' to interactions table in worker.")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='visual_feedback'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT;")
+            print("Added 'visual_feedback' to interactions table in worker.")
+            
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='token'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE;")
+            print("Added 'token' to users table in worker.")
 
-    c.execute("PRAGMA table_info(users)")
-    user_columns = [col[1] for col in c.fetchall()]
-    if 'token' not in user_columns:
-        c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
-        print("Added 'token' to users table in worker.")
+        conn.commit()
+        print("\U0001F527 Database schema patched in worker (PostgreSQL).")
+    except Exception as e:
+        print(f"\U0001F525 Error patching PostgreSQL database schema in worker: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
-    conn.commit()
-    conn.close()
-    print("\U0001F527 Database schema patched in worker.")
-
+# Ejecutar la inicialización y parcheo de la DB al inicio del worker
 init_db()
 patch_db_schema()
 
@@ -141,7 +175,6 @@ def upload_file_to_s3(file_path, bucket, object_name=None):
     if object_name is None:
         object_name = os.path.basename(file_path)
     try:
-        # LÍNEA MODIFICADA: Eliminado ExtraArgs={'ACL': 'public-read'}
         s3_client.upload_file(file_path, bucket, object_name) 
         print(f"[S3 UPLOAD] Archivo {file_path} subido a s3://{bucket}/{object_name}")
         return f"https://{bucket}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{object_name}"
@@ -190,30 +223,40 @@ def analyze_video_posture(video_path):
             print(f"[ERROR] analyze_video_posture: {summary['error']} {video_path}")
             return summary
 
-        frame_count_cap = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frames_to_analyze = min(200, frame_count_cap)
-        
+        # Usar cv2.CascadeClassifier para detección facial, ya que MediaPipe no está en requirements.txt del worker
+        # y es más simple para este caso de uso básico de detección de rostro
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+
+        frames_to_analyze = min(200, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) # Limitar frames a analizar para rendimiento
+
         if frames_to_analyze == 0:
-            summary["error"] = "No frames to analyze in video."
             cap.release()
-            return summary
+            return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%"
 
         for _ in range(frames_to_analyze):
             ret, frame = cap.read()
             if not ret:
                 break
-            summary["frames_total"] += 1
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            # Usar cv2.CascadeClassifier para detección facial
-            faces = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml").detectMultiScale(gray, 1.3, 5) # Corregido de detectManyScales
+            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
             if len(faces) > 0:
                 summary["face_detected_frames"] += 1
         cap.release()
         
+        if summary["frames_total"] > 0:
+            ratio = summary["face_detected_frames"] / summary["frames_total"]
+        else:
+            ratio = 0
+
+        if ratio >= 0.7:
+            return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta", f"{ratio*100:.1f}%"
+        elif ratio > 0:
+            return "⚠️ Asegúrate de mantenerte visible durante toda la sesión.", "Mejorar visibilidad", f"{ratio*100:.1f}%"
+        else:
+            return "❌ No se detectó rostro en el video.", "No detectado", "0.0%"
     except Exception as e:
-        summary["error"] = str(e)
-        print(f"[ERROR] Error during video posture analysis: {e}")
-    return summary
+        return f"⚠️ Error en análisis visual: {str(e)}", "Error", "N/A"
+
 
 def compress_video_for_ai(input_path, output_path):
     try:
@@ -263,146 +306,120 @@ def process_session_video(data):
             final_video_s3_url = "Video_Not_Available_Error"
     
     local_mp4_path = None
-    temp_audio_path = None # Ruta del archivo de audio temporal local
-    s3_audio_key = None # Clave del archivo de audio en S3
+    temp_audio_path = None
+    s3_audio_key = None
 
     if local_webm_path:
         mp4_object_key = video_object_key.replace('.webm', '.mp4')
         local_mp4_path = os.path.join(TEMP_PROCESSING_FOLDER, mp4_object_key)
         
-        # Generar un nombre único para el archivo de audio en S3
         audio_filename_base = os.path.splitext(video_object_key)[0]
-        s3_audio_key = f"audio/{audio_filename_base}.wav" # Guardar audios en una subcarpeta 'audio/' en S3
+        s3_audio_key = f"audio/{audio_filename_base}.wav"
         temp_audio_path = os.path.join(TEMP_PROCESSING_FOLDER, f"{audio_filename_base}.wav")
 
 
         print(f"[INFO] Processing local video: {local_webm_path}")
         if convert_webm_to_mp4(local_webm_path, local_mp4_path):
-            video_to_process_path = local_mp4_path # Default to uncompressed MP4
+            video_to_process_path = local_mp4_path
             print(f"[INFO] Converted to local MP4: {local_mp4_path}")
 
-            # Comprimir MP4 para reducir su tamaño antes de continuar
             compressed_path = local_mp4_path.replace(".mp4", "_compressed.mp4")
             if compress_video_for_ai(local_mp4_path, compressed_path):
-                video_to_process_path = compressed_path # Use compressed path if successful
+                video_to_process_path = compressed_path
                 print(f"[INFO] Compressed video ready: {compressed_path}")
             else:
-                # If compression fails, video_to_process_path remains local_mp4_path (uncompressed MP4)
                 print(f"[WARNING] Compression failed. Using uncompressed MP4: {local_mp4_path}")
 
-        else: # This 'else' correctly aligns with the 'if convert_webm_to_mp4' statement
-            video_to_process_path = local_webm_path # Fallback to original WEBM
+        else:
+            video_to_process_path = local_webm_path
             print(f"[WARNING] Failed to convert to MP4, attempting to process original WEBM: {local_webm_path}")
 
         try:
-            # --- Extracción de Audio con FFmpeg y Transcripción con AWS Transcribe ---
-            # Eliminar la lógica de Whisper y reemplazarla por AWS Transcribe
-            # if whisper_model: # Bloque de Whisper eliminado
-            try:
-                # Usar subprocess para extraer audio directamente con ffmpeg
-                print("[INFO] Extracting audio from video using ffmpeg directly...")
-                command = [
-                    "ffmpeg", "-i", video_to_process_path,  # Video de entrada
-                    "-vn",                                  # No incluir video
-                    "-acodec", "pcm_s16le",                 # Codec de audio PCM (16-bit, little-endian)
-                    "-ar", "16000",                         # Tasa de muestreo de audio (16 kHz, común para voz)
-                    "-ac", "1",                             # Un canal de audio (mono)
-                    "-y",                                   # Sobreescribir archivo de salida sin preguntar
-                    temp_audio_path                         # Archivo de audio de salida
-                ]
-                subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                print(f"[INFO] Audio extracted to {temp_audio_path}.")
+            print("[INFO] Extracting audio from video using ffmpeg directly...")
+            command = [
+                "ffmpeg", "-i", video_to_process_path,
+                "-vn",
+                "-acodec", "pcm_s16le",
+                "-ar", "16000",
+                "-ac", "1",
+                "-y",
+                temp_audio_path
+            ]
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            print(f"[INFO] Audio extracted to {temp_audio_path}.")
 
-                if os.path.exists(temp_audio_path) and os.path.getsize(temp_audio_path) > 0:
-                    # Subir el archivo de audio a S3 para AWS Transcribe
-                    audio_s3_url = upload_file_to_s3(temp_audio_path, AWS_S3_BUCKET_NAME, s3_audio_key)
-                    if not audio_s3_url:
-                        raise Exception("Failed to upload audio to S3 for Transcribe.")
-                    print(f"[S3 UPLOAD] Audio subido a S3: {audio_s3_url}")
+            if os.path.exists(temp_audio_path) and os.path.getsize(temp_audio_path) > 0:
+                audio_s3_url = upload_file_to_s3(temp_audio_path, AWS_S3_BUCKET_NAME, s3_audio_key)
+                if not audio_s3_url:
+                    raise Exception("Failed to upload audio to S3 for Transcribe.")
+                print(f"[S3 UPLOAD] Audio subido a S3: {audio_s3_url}")
 
-                    # Iniciar el trabajo de transcripción con AWS Transcribe
-                    job_name = f"leo-trainer-transcription-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
-                    transcribe_client.start_transcription_job(
-                        TranscriptionJobName=job_name,
-                        Media={'MediaFileUri': audio_s3_url},
-                        MediaFormat='wav', # Asegúrate de que coincida con el formato de salida de ffmpeg
-                        LanguageCode='es-US' # CORREGIDO: de 'es-MX' a 'es-US'
-                    )
-                    print(f"[AWS TRANSCRIBE] Transcripción iniciada: {job_name}")
+                job_name = f"leo-trainer-transcription-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
+                transcribe_client.start_transcription_job(
+                    TranscriptionJobName=job_name,
+                    Media={'MediaFileUri': audio_s3_url},
+                    MediaFormat='wav',
+                    LanguageCode='es-US'
+                )
+                print(f"[AWS TRANSCRIBE] Transcripción iniciada: {job_name}")
 
-                    # Esperar a que el trabajo de transcripción finalice
-                    max_attempts = 60 # Esperar hasta 10 minutos (60 * 10 segundos)
-                    for attempt in range(max_attempts):
-                        status = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
-                        job_status = status['TranscriptionJob']['TranscriptionJobStatus']
-                        if job_status in ['COMPLETED', 'FAILED']:
-                            break
-                        print(f"[AWS TRANSCRIBE] Estado de la transcripción: {job_status}. Esperando...")
-                        time.sleep(10) # Esperar 10 segundos antes de la siguiente verificación
+                max_attempts = 60
+                for attempt in range(max_attempts):
+                    status = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+                    job_status = status['TranscriptionJob']['TranscriptionJobStatus']
+                    if job_status in ['COMPLETED', 'FAILED']:
+                        break
+                    print(f"[AWS TRANSCRIBE] Estado de la transcripción: {job_status}. Esperando...")
+                    time.sleep(10)
 
-                    if job_status == 'COMPLETED':
-                        transcript_uri = status['TranscriptionJob']['Transcript']['TranscriptFileUri']
-                        # Descargar el contenido del transcript
-                        transcript_response = requests.get(transcript_uri)
-                        transcript_json = transcript_response.json()
-                        transcribed_text = transcript_json['results']['transcripts'][0]['transcript']
-                        print(f"[AWS TRANSCRIBE] Transcripción completa: '{transcribed_text}'") # AÑADIDO: Log para ver el contenido real
-                    else:
-                        print(f"[AWS TRANSCRIBE ERROR] Transcripción fallida o no completada: {job_status}")
-                        transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
-
+                if job_status == 'COMPLETED':
+                    transcript_uri = status['TranscriptionJob']['Transcript']['TranscriptFileUri']
+                    transcript_response = requests.get(transcript_uri)
+                    transcript_json = transcript_response.json()
+                    transcribed_text = transcript_json['results']['transcripts'][0]['transcript']
+                    print(f"[AWS TRANSCRIBE] Transcripción completa: '{transcribed_text}'")
                 else:
-                    print("⚠️ No se pudo extraer audio o el archivo de audio está vacío.")
-                    transcribed_text = "Error en transcripción (audio vacío o no extraído)."
-            except subprocess.CalledProcessError as e:
-                print(f"[ERROR] Error durante la extracción de audio con ffmpeg: {e.stderr.decode()}")
-                transcribed_text = "Error en transcripción (extracción de audio fallida)."
+                    print(f"[AWS TRANSCRIBE ERROR] Transcripción fallida o no completada: {job_status}")
+                    transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
+
+            else:
+                print("⚠️ No se pudo extraer audio o el archivo de audio está vacío.")
+                transcribed_text = "Error en transcripción (audio vacío o no extraído)."
+        except subprocess.CalledProcessError as e:
+            print(f"[ERROR] Error durante la extracción de audio con ffmpeg: {e.stderr.decode()}")
+            transcribed_text = "Error en transcripción (extracción de audio fallida)."
+        except Exception as e:
+            print(f"[ERROR] Error durante la transcripción con AWS Transcribe: {e}")
+            transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
+
+        if video_to_process_path and os.path.exists(video_to_process_path):
+            try:
+                print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
+                # Llamada a analyze_video_posture que ya devuelve el feedback y la evaluación interna
+                visual_feedback_public, visual_eval_internal, visual_pct = analyze_video_posture(video_to_process_path)
+                posture_feedback = visual_feedback_public # Usar el feedback público
+                print(f"[POSTURA] {posture_feedback}")
             except Exception as e:
-                print(f"[ERROR] Error durante la transcripción con AWS Transcribe: {e}")
-                transcribed_text = "Error en transcripción (servicio AWS Transcribe)."
-            # Eliminar el bloque 'else: print("[WARNING] Whisper model not loaded...")'
+                posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
+                print(f"[ERROR] Unexpected error in visual analysis: {e}")
+        else:
+            print(f"[WARNING] Skipping visual analysis: Processed video file not found at {video_to_process_path}")
+            posture_feedback = "Video no disponible para análisis visual."
 
-            # --- VISUAL ANALYSIS ---
-            if video_to_process_path and os.path.exists(video_to_process_path):
-                try:
-                    print(f"[VIDEO ANALYSIS] Starting posture analysis for: {video_to_process_path}")
-                    video_stats = analyze_video_posture(video_to_process_path)
-                    if video_stats["error"]:
-                        posture_feedback = f"⚠️ Error en análisis visual: {video_stats['error']}"
-                    elif video_stats['frames_total'] > 0:
-                        visible_pct = (video_stats['face_detected_frames'] / video_stats['frames_total']) * 100
-                        posture_feedback = f"Rostro visible en {visible_pct:.1f}% de los frames."
-                    else:
-                        posture_feedback = "No se pudieron analizar frames de video."
-                    print(f"[POSTURA] {posture_feedback}")
-                except Exception as e:
-                    posture_feedback = f"⚠️ Error inesperado en análisis visual: {str(e)}"
-                    print(f"[ERROR] Unexpected error in visual analysis: {e}")
-            else:
-                print(f"[WARNING] Skipping visual analysis: Processed video file not found at {video_to_process_path}")
-                posture_feedback = "Video no disponible para análisis visual."
+        if local_mp4_path and os.path.exists(local_mp4_path):
+            final_video_s3_url = upload_file_to_s3(local_mp4_path, AWS_S3_BUCKET_NAME, mp4_object_key)
+            if not final_video_s3_url:
+                print(f"[ERROR] Falló la subida del MP4 final a S3: {local_mp4_path}")
+        else:
+            print(f"[WARNING] No se generó archivo MP4 local para subir a S3: {local_mp4_path}")
+            final_video_s3_url = "Video_Processing_Failed"
 
-            # --- Subir MP4 final a S3 ---
-            if local_mp4_path and os.path.exists(local_mp4_path):
-                final_video_s3_url = upload_file_to_s3(local_mp4_path, AWS_S3_BUCKET_NAME, mp4_object_key)
-                if not final_video_s3_url:
-                    print(f"[ERROR] Falló la subida del MP4 final a S3: {local_mp4_path}")
-            else:
-                print(f"[WARNING] No se generó archivo MP4 local para subir a S3: {local_mp4_path}")
-                final_video_s3_url = "Video_Processing_Failed"
-
-        except Exception as video_processing_error:
-            print(f"[CRITICAL ERROR] Error during video processing or S3 upload: {video_processing_error}")
-            posture_feedback = f"Error general de procesamiento de video: {str(video_processing_error)}"
-            final_video_s3_url = "Video_Processing_Error"
-            
     else:
         print("[WARNING] Skipping all video processing (conversion, transcription, visual analysis, S3 upload) due to missing WEBM file.")
         transcribed_text = "Transcripción no disponible (video faltante)."
         posture_feedback = "Análisis visual no realizado (video faltante)."
         final_video_s3_url = "Video_Missing_Error"
 
-    # Limpiar el archivo de audio de S3 después de la transcripción
     if s3_audio_key:
         try:
             s3_client.delete_object(Bucket=AWS_S3_BUCKET_NAME, Key=s3_audio_key)
@@ -411,11 +428,10 @@ def process_session_video(data):
             print(f"[CLEANUP ERROR] Falló la eliminación del archivo de audio de S3 {s3_audio_key}: {e}")
 
     final_user_text = transcribed_text
-    leo_dialogue = ""
-    
+    leo_dialogue = "" # Ya no se usa la conversación de D-ID
+
     full_conversation_text = f"Participante: {final_user_text}\nLeo: (No se capturó el diálogo del agente D-ID)"
 
-    # AÑADIDO: Log para ver el contenido de final_user_text antes de la evaluación
     print(f"DEBUG: final_user_text antes de evaluate_interaction: '{final_user_text}'")
 
     if not final_user_text.strip():
@@ -425,20 +441,24 @@ def process_session_video(data):
         tip_text = "Asegúrate de que tu micrófono funcione y hables claramente durante la sesión."
     else:
         try:
+            # evaluator.py ya devuelve la evaluación pública y la interna estructurada
             summaries = evaluate_interaction(final_user_text, leo_dialogue, video_to_process_path if video_to_process_path and os.path.exists(video_to_process_path) else None)
-            # AÑADIDO: Log para ver el tipo y contenido de summaries
+            
             print(f"DEBUG: Tipo de summaries después de evaluate_interaction: {type(summaries)}")
             print(f"DEBUG: Contenido de summaries después de evaluate_interaction: {summaries}")
 
             public_summary = summaries.get("public", public_summary)
-            internal_summary = summaries.get("internal", internal_summary)
-            if "error" in summaries.get("internal", {}):
+            internal_summary_dict = summaries.get("internal", {}) # Obtener el diccionario
+            if "error" in internal_summary_dict:
                 public_summary = "⚠️ Evaluación automática no disponible."
-                internal_summary = json.dumps({"error": summaries.get("internal", {}).get("error", "Error desconocido en evaluación.")})
+                internal_summary_db = json.dumps({"error": internal_summary_dict.get("error", "Error desconocido en evaluación.")})
+            else:
+                internal_summary_db = json.dumps(internal_summary_dict, ensure_ascii=False, indent=2) # Convertir a JSON string
+            
             print(f"[INFO] AI Evaluation successful. Public: {public_summary[:50]}...")
         except Exception as e:
             public_summary = "⚠️ Evaluación automática no disponible."
-            internal_summary = json.dumps({"error": f"Error al llamar a evaluate_interaction: {str(e)}"})
+            internal_summary_db = json.dumps({"error": f"Error al llamar a evaluate_interaction: {str(e)}"})
             print(f"[ERROR] Error calling evaluate_interaction: {e}")
 
         try:
@@ -458,49 +478,42 @@ def process_session_video(data):
             tip_text = f"⚠️ No se pudo generar un consejo automático: {str(e)}"
             print(f"[ERROR] Error generating personalized tip: {e}")
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = None # Inicializar conn para el bloque finally
     try:
-        # CONVERTIR EL DICCIONARIO A CADENA JSON ANTES DE GUARDARLO EN LA DB
-        internal_summary_db = json.dumps(internal_summary, ensure_ascii=False, indent=2)
+        conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
+        c = conn.cursor()
+        
+        # Primero intenta obtener la ID existente, para UPDATE en lugar de INSERT
+        # Si la tabla ya existe y tiene un audio_path único, intenta encontrarlo
+        # Si no, siempre inserta. Es más común que las tareas Celery inserten una vez.
+        # c.execute("SELECT id FROM interactions WHERE audio_path = %s", (video_object_key,))
+        # existing_row = c.fetchone()
 
-        c.execute("SELECT id FROM interactions WHERE audio_path = ?", (video_object_key,))
-        existing_row = c.fetchone()
+        # Si no estás haciendo un UPDATE basado en audio_path, puedes simplemente INSERTAR siempre
+        # o gestionar la lógica de UPDATE/INSERT basada en un ID de sesión más estable
+        # Para la prueba, simplemente INSERTAR es lo más sencillo si cada sesión es nueva
 
-        if existing_row:
-            interaction_id = existing_row[0]
-            c.execute("""UPDATE interactions SET
-                name = ?, email = ?, scenario = ?, message = ?, response = ?, timestamp = ?,
-                evaluation = ?, evaluation_rh = ?, duration_seconds = ?,
-                tip = ?, visual_feedback = ?, audio_path = ?
-                WHERE id = ?""", (
-                name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
-                public_summary, internal_summary_db, duration, tip_text, # USAR internal_summary_db
-                posture_feedback, final_video_s3_url, interaction_id
-            ))
-            print(f"[DB] Updated interaction {interaction_id} for {email}, scenario {scenario}.")
-        else:
-            print(f"[WARNING] No preliminary DB entry found for {video_object_key}. Inserting new record.")
-            c.execute("""INSERT INTO interactions (
+        c.execute("""INSERT INTO interactions (
                 name, email, scenario, message, response, timestamp,
                 evaluation, evaluation_rh, duration_seconds, tip,
                 audio_path, visual_feedback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", (
                 name, email, scenario, full_conversation_text, leo_dialogue, timestamp,
-                public_summary, internal_summary_db, duration, tip_text, # USAR internal_summary_db
+                public_summary, internal_summary_db, duration, tip_text,
                 final_video_s3_url, posture_feedback
             ))
-            print(f"[DB] Inserted new interaction for {email}, scenario {scenario}.")
-
         conn.commit()
+        print(f"[DB] Inserted new interaction for {email}, scenario {scenario} in PostgreSQL.")
+
     except Exception as e:
-        print(f"[ERROR] Database save failed in Celery task: {e}")
-        conn.rollback()
+        print(f"[ERROR] Database save failed in Celery task (PostgreSQL): {e}")
+        if conn:
+            conn.rollback()
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     temp_files_to_clean = [local_webm_path, local_mp4_path, temp_audio_path]
-    # Add compressed_path to cleanup if it was created
     if 'compressed_path' in locals() and compressed_path and os.path.exists(compressed_path):
         temp_files_to_clean.append(compressed_path)
 
@@ -521,7 +534,7 @@ def process_session_video(data):
         "full_conversation_text": full_conversation_text,
         "leo_dialogue": leo_dialogue,
         "timestamp": timestamp,
-        "internal_summary": internal_summary,
+        "internal_summary": internal_summary_db, # Retornar el JSON string ya preparado
         "duration": duration,
         "name": name,
         "email": email

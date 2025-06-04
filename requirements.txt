@@ -11,3 +11,4 @@ moviepy==1.0.3
 mediapipe
 celery[redis] 
 boto3
+psycopg2-binary

@@ -1,11 +1,12 @@
 # app.py
 
 import os
+import psycopg2
+from urllib.parse import urlparse # Añade esta importación
 import json
-import sqlite3
 import secrets
-import pandas as pd
-import matplotlib.pyplot as plt
+import pandas as pd # Mantener si se usa para otras funciones (ej. export)
+import matplotlib.pyplot as plt # Mantener si se usa para otras funciones (ej. gráficos)
 from datetime import datetime, date
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, send_file
 from flask_cors import CORS
@@ -13,7 +14,7 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from celery import Celery
 from celery.result import AsyncResult # Import this!
-from celery_worker import celery_app 
+from celery_worker import celery_app # Asume que celery_worker.py también se ha actualizado
 
 import openai
 import subprocess 
@@ -39,9 +40,32 @@ s3_client = boto3.client(
     region_name=AWS_S3_REGION_NAME
 )
 
-PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") 
-TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
+# --- Nueva Configuración de Base de Datos PostgreSQL ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set!")
+
+def get_db_connection():
+    parsed_url = urlparse(DATABASE_URL)
+    conn = psycopg2.connect(
+        database=parsed_url.path[1:],
+        user=parsed_url.username,
+        password=parsed_url.password,
+        host=parsed_url.hostname,
+        port=parsed_url.port,
+        sslmode='require' # Para Render.com, normalmente se requiere SSL
+    )
+    return conn
+
+# Eliminamos DB_PATH de SQLite y su os.makedirs
+# PERSISTENT_DISK_MOUNT_PATH = os.getenv("PERSISTENT_DISK_MOUNT_PATH", "/var/data") 
+# TEMP_PROCESSING_FOLDER = os.path.join(PERSISTENT_DISK_MOUNT_PATH, "leo_trainer_processing") 
+# os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True) # Ya no es necesario si la DB no está en disco persistente
+
+# Mantenemos TEMP_PROCESSING_FOLDER para archivos temporales (videos WEBM)
+TEMP_PROCESSING_FOLDER = os.getenv("TEMP_PROCESSING_FOLDER", "/tmp/leo_trainer_processing") 
 os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True)
+
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -72,70 +96,93 @@ app.config['UPLOAD_FOLDER'] = TEMP_PROCESSING_FOLDER
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "super-secret-key-fallback") 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123") 
 
-DB_PATH = os.path.join(TEMP_PROCESSING_FOLDER, "logs/interactions.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
+# --- init_db() para PostgreSQL ---
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT,
-        scenario TEXT,
-        message TEXT,           -- Full conversation text
-        response TEXT,          -- Leo's responses consolidated
-        audio_path TEXT,        -- URL del video en S3 (will be updated by Celery task)
-        timestamp TEXT,
-        evaluation TEXT,        -- Public summary from GPT (will be updated by Celery task)
-        evaluation_rh TEXT,     -- Internal/RH summary from GPT (will be updated by Celery task)
-        duration_seconds INTEGER DEFAULT 0,
-        tip TEXT,               -- Personalized tip from GPT (will be updated by Celery task)
-        visual_feedback TEXT    -- Feedback from video analysis (will be updated by Celery task)
-    )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT UNIQUE,
-        start_date TEXT,
-        end_date TEXT,
-        active INTEGER DEFAULT 1,
-        token TEXT UNIQUE -- Unique token for user access
-    )''')
-    conn.commit()
-    conn.close()
-    print("\U0001F4C3 Database initialized or already exists.")
+    conn = None
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                email TEXT,
+                scenario TEXT,
+                message TEXT,
+                response TEXT,
+                audio_path TEXT,
+                timestamp TEXT,
+                evaluation TEXT,
+                evaluation_rh TEXT,
+                duration_seconds INTEGER DEFAULT 0,
+                tip TEXT,
+                visual_feedback TEXT
+            );
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                email TEXT UNIQUE,
+                start_date TEXT,
+                end_date TEXT,
+                active INTEGER DEFAULT 1,
+                token TEXT UNIQUE
+            );
+        ''')
+        conn.commit()
+        print("\U0001F4C3 Database initialized or already exists (PostgreSQL).")
+    except Exception as e:
+        print(f"\U0001F525 Error initializing PostgreSQL database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
+# --- patch_db_schema() para PostgreSQL ---
 def patch_db_schema():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
 
-    c.execute("PRAGMA table_info(interactions)")
-    columns = [col[1] for col in c.fetchall()]
-    if 'evaluation_rh' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT")
-        print("Added 'evaluation_rh' to interactions table.")
+        # Check and add columns if they don't exist in interactions table
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='evaluation_rh'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT;")
+            print("Added 'evaluation_rh' to interactions table.")
 
-    if 'tip' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT")
-        print("Added 'tip' to interactions table.")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='tip'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN tip TEXT;")
+            print("Added 'tip' to interactions table.")
 
-    if 'visual_feedback' not in columns:
-        c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT")
-        print("Added 'visual_feedback' to interactions table.")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='visual_feedback'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE interactions ADD COLUMN visual_feedback TEXT;")
+            print("Added 'visual_feedback' to interactions table.")
+            
+        # Check and add column if it doesn't exist in users table
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='token'")
+        if not c.fetchone():
+            c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE;")
+            print("Added 'token' to users table.")
 
-    c.execute("PRAGMA table_info(users)")
-    user_columns = [col[1] for col in c.fetchall()]
-    if 'token' not in user_columns:
-        c.execute("ALTER TABLE users ADD COLUMN token TEXT UNIQUE")
-        print("Added 'token' to users table.")
+        conn.commit()
+        print("\U0001F527 Database schema patched (PostgreSQL).")
+    except Exception as e:
+        print(f"\U0001F525 Error patching PostgreSQL database schema: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
-    conn.commit()
-    conn.close()
-    print("\U0001F527 Database schema patched.")
-
+# Ejecutar la inicialización y parcheo de la DB al inicio de la app
 init_db()
 patch_db_schema()
+
 
 def upload_file_to_s3(file_path, bucket, object_name=None):
     """Sube un archivo a un bucket de S3"""
@@ -231,9 +278,9 @@ def select():
     token = request.form["token"]
     today = date.today().isoformat()
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
-    c.execute("SELECT active, start_date, end_date, token FROM users WHERE email=?", (email,))
+    c.execute("SELECT active, start_date, end_date, token FROM users WHERE email=%s", (email,))
     row = c.fetchone()
     conn.close()
 
@@ -248,9 +295,10 @@ def select():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    conn = sqlite3.connect(DB_PATH) 
+    
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
-    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = %s AND timestamp >= %s", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
@@ -265,7 +313,6 @@ def select():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    # CAMBIO: Priorizar request.form para token, luego session
     name = request.form.get("name") or session.get("name")
     email = request.form.get("email") or session.get("email")
     scenario = request.form["scenario"] if "scenario" in request.form else session.get("scenario")
@@ -279,9 +326,10 @@ def chat():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    conn = sqlite3.connect(DB_PATH)
+    
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
-    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = %s AND timestamp >= %s", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
@@ -295,9 +343,12 @@ def dashboard():
     print(f"DEBUG: Dashboard access - Name: {name}, Email: {email}, Token: {token}") 
     today = date.today().isoformat()
 
-    conn = sqlite3.connect(DB_PATH)
+    # Eliminado el if inicial para evitar redirecciones prematuras
+    # La validación se hace más abajo contra la tabla de usuarios
+
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
-    c.execute("SELECT start_date, end_date, active, token FROM users WHERE email = ?", (email,))
+    c.execute("SELECT start_date, end_date, active, token FROM users WHERE email = %s", (email,))
     row = c.fetchone()
     conn.close() 
 
@@ -310,23 +361,20 @@ def dashboard():
     if row[3] != token:
         return "Token inválido. Verifica con RH.", 403
 
- #- NUEVA LÓGICA: ESPERAR A LA TAREA DE CELERY ---
+    # --- NUEVA LÓGICA: ESPERAR A LA TAREA DE CELERY ---
     task_id = session.pop('processing_task_id', None) # Obtiene y borra el task_id de la sesión
     if task_id:
         print(f"DEBUG: Dashboard: Waiting for Celery task {task_id} to complete...")
-        from celery.result import AsyncResult # Asegúrate de tener este import al inicio del archivo
+        # Import AsyncResult está al inicio del archivo
         task = AsyncResult(task_id, app=celery_app)
         try:
-            # Espera hasta 10 minutos (600 segundos) para que la tarea termine
-            # Esto bloqueará la petición HTTP, pero asegura que los datos estén listos.
-            # Ajusta el timeout si tus tareas pueden ser más largas o más cortas.
-            task.wait(timeout=600)
+            task.wait(timeout=600) # Espera hasta 10 minutos (600 segundos)
             print(f"DEBUG: Dashboard: Celery task {task_id} status: {task.status}")
             if task.successful():
                 print(f"DEBUG: Dashboard: Celery task {task_id} completed successfully.")
             else:
                 print(f"DEBUG: Dashboard: Celery task {task_id} failed: {task.info}")
-                # Considera mostrar un mensaje de error al usuario si la tarea falla
+                # Considera mostrar un mensaje de error al usuario aquí
         except Exception as e:
             print(f"DEBUG: Dashboard: Error waiting for Celery task {task_id}: {e}")
             # Maneja el error, quizás mostrando un mensaje al usuario
@@ -334,15 +382,16 @@ def dashboard():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    conn = sqlite3.connect(DB_PATH) 
+    
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
-    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = ? AND timestamp >= ?", (email, start_of_month))
+    c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = %s AND timestamp >= %s", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
     max_seconds = 1800 
 
     # --- DEBUGGING PRINTS ADDED HERE FOR DASHBOARD ---
     print(f"DEBUG: Dashboard Query - name='{name}', email='{email}'")
-    c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip, visual_feedback FROM interactions WHERE name=? AND email=? ORDER BY timestamp DESC", (name, email))
+    c.execute("SELECT scenario, message, evaluation, audio_path, timestamp, tip, visual_feedback FROM interactions WHERE name=%s AND email=%s ORDER BY timestamp DESC", (name, email))
     records = c.fetchall()
     print(f"DEBUG: Dashboard Query Result - Fetched {len(records)} records.")
     # --- END DEBUGGING PRINTS ---
@@ -370,8 +419,9 @@ def upload_video():
         return jsonify({'status': 'error', 'message': 'Faltan datos (video, nombre o correo).'}), 400
 
     filename = secure_filename(f"{email}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.webm")
-    local_path = os.path.join("temp_uploads", filename)
-    os.makedirs("temp_uploads", exist_ok=True)
+    # Usa TEMP_PROCESSING_FOLDER que ahora apunta a /tmp
+    local_path = os.path.join(TEMP_PROCESSING_FOLDER, filename) 
+    os.makedirs(TEMP_PROCESSING_FOLDER, exist_ok=True) # Asegura que la carpeta temporal exista
     video_file.save(local_path)
 
     try:
@@ -441,42 +491,49 @@ def admin_panel():
         print("DEBUG: No hay sesión de administrador, redirigiendo a /login")
         return redirect("/login")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
 
     if request.method == "POST":
-        print("DEBUG: Recibida solicitud POST en /admin")
+        print(f"DEBUG: Recibida solicitud POST en /admin - Acción: {request.form.get('action')}") # Más detalle aquí
         action = request.form.get("action")
-        print(f"DEBUG: Acción del formulario: {action}")
+        # Asegúrate de que el token sea generado aquí también
+        token = secrets.token_hex(8) # Para action="add"
+
         if action == "add":
             print("DEBUG: Intentando añadir usuario")
             name = request.form["name"]
             email = request.form["email"]
             start = request.form["start_date"]
             end = request.form["end_date"] 
-            token = secrets.token_hex(8) 
+            # El token debe ser generado antes de usarlo en el try/except
             print(f"DEBUG: Datos de usuario: {name}, {email}, {start}, {end}, {token}")
             try:
-                c.execute("""INSERT OR REPLACE INTO users (name, email, start_date, end_date, active, token)
-                                   VALUES (?, ?, ?, ?, 1, ?)""", (name, email, start, end, token))
+                # Usa %s para PostgreSQL
+                c.execute("""INSERT INTO users (name, email, start_date, end_date, active, token)
+                                   VALUES (%s, %s, %s, %s, 1, %s)
+                                   ON CONFLICT (email) DO UPDATE SET
+                                   name = EXCLUDED.name, start_date = EXCLUDED.start_date,
+                                   end_date = EXCLUDED.end_date, active = EXCLUDED.active, token = EXCLUDED.token;
+                                   """, (name, email, start, end, token))
                 conn.commit()
                 print(f"[ADMIN] Added/Updated user: {email}")
             except Exception as e:
-                print(f"ERROR: Falló al insertar usuario en DB: {e}")
+                print(f"ERROR: Falló al insertar/actualizar usuario en DB: {e}")
                 conn.rollback()
                 return f"Error al guardar usuario: {str(e)}", 500
         elif action == "toggle":
             print("DEBUG: Intentando activar/desactivar usuario")
             user_id = int(request.form["user_id"])
-            c.execute("UPDATE users SET active = 1 - active WHERE id = ?", (user_id,))
+            c.execute("UPDATE users SET active = 1 - active WHERE id = %s", (user_id,))
             print(f"[ADMIN] Toggled user active status: {user_id}")
         elif action == "regen_token":
             print("DEBUG: Intentando regenerar token")
             user_id = int(request.form["user_id"])
             new_token = secrets.token_hex(8)
-            c.execute("UPDATE users SET token = ? WHERE id = ?", (new_token, user_id))
+            c.execute("UPDATE users SET token = %s WHERE id = %s", (new_token, user_id))
             print(f"[ADMIN] Regenerated token for user: {user_id}")
-        conn.commit()
+        conn.commit() # Ya hecho en cada if/elif, pero una final no daña.
 
     # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
     print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
@@ -492,15 +549,21 @@ def admin_panel():
         try:
             parsed_rh_evaluation = json.loads(row[8])
         except (json.JSONDecodeError, TypeError):
-            parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
+            # En caso de error, aseguramos que el dict tenga una estructura consistente
+            parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8] if row[8] else "None/Empty"}
 
         processed_row = list(row)
         processed_row[8] = parsed_rh_evaluation 
         processed_data.append(processed_row)
 
+    conn = get_db_connection() # ¡Reconexión para asegurar datos frescos si el POST modificó users!
+    c = conn.cursor()
     c.execute("SELECT id, name, email, start_date, end_date, active, token FROM users")
     users = c.fetchall()
+    conn.close() # Cierra la conexión después de obtener users
 
+    conn = get_db_connection() # ¡Reconexión para la tabla de uso!
+    c = conn.cursor()
     c.execute("""
         SELECT u.name, u.email, COALESCE(SUM(i.duration_seconds), 0) as used_secs
         FROM users u
@@ -508,6 +571,7 @@ def admin_panel():
         GROUP BY u.name, u.email
     """)
     usage_rows = c.fetchall()
+    conn.close() # Cierra la conexión
 
     usage_summaries = []
     total_minutes_all_users = 0
@@ -524,8 +588,6 @@ def admin_panel():
 
     contracted_minutes = 1050 
 
-    conn.close()
-
     return render_template(
         "admin.html",
         data=processed_data, 
@@ -540,7 +602,11 @@ def end_session_redirect():
     name = session.get("name")
     email = session.get("email")
     if name and email:
-        return redirect(url_for('dashboard', name=name, email=email), code=307 if request.method == "POST" else 302)
+        # Asegúrate de que el token también se pase si es una redirección POST
+        token = session.get("token") # Asegúrate de que el token está en la sesión
+        # Pasar los datos como query parameters para GET, o como form data para POST 307
+        # En este caso, el JS en chat.html ya hace un POST a /dashboard
+        return redirect(url_for('dashboard', name=name, email=email, token=token), code=307 if request.method == "POST" else 302)
     return redirect(url_for('index'))
 
 @app.route("/admin/delete_session/<int:session_id>", methods=["POST"])
@@ -548,12 +614,11 @@ def delete_session(session_id):
     if not session.get("admin"):
         return redirect("/login") 
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
 
     try:
-        # 1. Get the video URL from the database
-        c.execute("SELECT audio_path FROM interactions WHERE id = ?", (session_id,))
+        c.execute("SELECT audio_path FROM interactions WHERE id = %s", (session_id,)) # %s para PostgreSQL
         row = c.fetchone()
 
         if row and row[0]: 
@@ -570,7 +635,7 @@ def delete_session(session_id):
                 else:
                     return f"Error al eliminar el video de S3: {str(e)}", 500
 
-            c.execute("DELETE FROM interactions WHERE id = ?", (session_id,))
+            c.execute("DELETE FROM interactions WHERE id = %s", (session_id,)) # %s para PostgreSQL
             conn.commit()
             print(f"[DB DELETE] Successfully deleted record for session ID: {session_id}")
             return redirect("/admin") 
@@ -583,21 +648,33 @@ def delete_session(session_id):
         print(f"[DELETE ERROR] Failed to delete session {session_id}: {e}")
         return f"Error al eliminar la sesión: {str(e)}", 500
     finally:
-        conn.close()
+        if conn: # Asegurarse de que conn existe antes de cerrar
+            conn.close()
 
+# --- Ruta test_db_connection() para PostgreSQL ---
 @app.route("/test_db")
 def test_db_connection():
+    conn = None # Inicializar conn a None
     try:
-        conn = sqlite3.connect(DB_PATH) # DB_PATH es tu variable global definida arriba
+        conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM interactions")
         count = c.fetchone()[0]
-        c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY timestamp DESC LIMIT 5") # Obtiene algunas columnas para verificar
-        rows = c.fetchall()
+        c.execute("SELECT id, name, email, audio_path FROM interactions ORDER BY id DESC LIMIT 5") # Obtiene algunas columnas para verificar
+        rows_data = c.fetchall() # Obtener las filas
         conn.close()
-        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {rows}</p><p>DB_PATH: {DB_PATH}</p>"
+
+        # Formatear las filas para que se muestren bien en HTML
+        formatted_rows = "<br>".join([str(row) for row in rows_data])
+
+        return f"<h1>DB Test: Interactions Count: {count}</h1><p>First 5 rows: {formatted_rows}</p><p>DB_PATH: (Now PostgreSQL, not a file path)</p>"
     except Exception as e:
-        return f"<h1>DB Test Error: {e}</h1><p>DB_PATH: {DB_PATH}</p>", 500
+        print(f"ERROR en /test_db: {e}")
+        return f"<h1>DB Test Error: {e}</h1><p>Check logs for DATABASE_URL or DB connection issues.</p>", 500
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.route("/healthz")
 def health_check():
