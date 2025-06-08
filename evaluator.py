@@ -39,26 +39,26 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
                 return "⚠️ No se pudo abrir el archivo de video para análisis visual.", "Error en video", "N/A"
 
             frontal_frames = 0
-            total_frames_processed = 0 # Initialize a counter for processed frames
+            total_frames_processed = 0
             face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-            max_frames_to_check = 200 # Limit frames to analyze for performance
+            max_frames_to_check = 200
 
-            for _ in range(max_frames_to_check): # Loop up to max_frames_to_check
+            for _ in range(max_frames_to_check):
                 ret, frame = cap.read()
-                if not ret: # Break if no more frames or error
+                if not ret:
                     break
-                total_frames_processed += 1 # Increment only if a frame was successfully read
+                total_frames_processed += 1
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 faces = face_cascade.detectMultiScale(gray, 1.3, 5)
                 if len(faces) > 0:
                     frontal_frames += 1
             cap.release()
-            
-            if total_frames_processed == 0: # Check if any frames were processed
+
+            if total_frames_processed == 0:
                 return "⚠️ No se encontraron frames para analizar en el video.", "Sin frames", "0.0%"
 
-            ratio = frontal_frames / total_frames_processed # Use correctly counted frames for ratio
+            ratio = frontal_frames / total_frames_processed
 
             if ratio >= 0.7:
                 return "✅ Te mostraste visible y profesional frente a cámara.", "Correcta", f"{ratio*100:.1f}%"
@@ -68,6 +68,12 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
                 return "❌ No se detectó rostro en el video.", "No detectado", "0.0%"
         except Exception as e:
             return f"⚠️ Error en análisis visual: {str(e)}", "Error", "N/A"
+
+    def detect_disqualifying_phrases(text):
+        disqualifying_phrases = [
+            "no sé", "no tengo idea", "lo invento", "no lo estudié", "no estudié bien", "no conozco", "no me acuerdo"
+        ]
+        return any(p in text.lower() for p in disqualifying_phrases)
 
     score = basic_keywords_eval(user_text)
     closure_ok = detect_closure_language(user_text)
@@ -84,62 +90,116 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
     active_listening_keywords = ["entiendo", "comprendo", "veo que", "lo que dices", "tiene sentido", "si entiendo bien", "parafraseando"]
     active_listening_score = sum(1 for phrase in active_listening_keywords if phrase in user_text.lower())
 
-
-    # GPT feedback
     feedback_level = "alto"
     gpt_public_summary = ""
     gpt_internal_structured_feedback = {}
 
     try:
-        # Request a JSON output from GPT
-        # Adjusting the system prompt to focus on user behavior as Leo's dialogue is not provided.
-        # Removing any specific mentions of Leo's text for evaluation context.
-        system_prompt = textwrap.dedent("""
-            Eres un coach experto en entrenamiento de ventas farmacéuticas para representantes médicos.
-            Tu objetivo es evaluar el desempeño del "Participante" en una simulación de visita médica,
-            aplicando el 'Modelo de Ventas Da Vinci' y los principios de 'Insights Discovery' (comunicación adaptativa).
-            Proporciona retroalimentación constructiva, específica y accionable.
+        # TU PROMPT COMPLETO AQUÍ
+        system_prompt = textwrap.dedent(""" 
+Eres un evaluador experto de simulaciones de visita médica entre representantes farmacéuticos y médicos.
 
-            La evaluación debe centrarse exclusivamente en la actuación del Participante. El "Médico (Leo)" es un avatar interactivo cuyo diálogo no se proporciona para el análisis.
+Tu tarea es analizar transcripciones de estas simulaciones, y generar una evaluación profesional como la que realizan coaches humanos.
 
-            **Modelo de Ventas Da Vinci - Fases Clave:**
-            1.  **Preparación de la Visita (Paso 1)**: Evalúa si el participante demuestra haber analizado la información y fijado objetivos (evidenciado en su discurso inicial o preguntas).
-            2.  **Apertura (Paso 2)**: ¿El participante capturó la atención del médico y despertó su interés? ¿Creó un vínculo? (Ej: saludo profesional, mención de visita anterior, enfoque en el paciente/síntomas relevantes).
-            3.  **Persuasión (Paso 3)**: ¿Descubrió necesidades del paciente y transmitió mensajes clave para persuadir al médico? ¿Utilizó preguntas poderosas? ¿Presentó beneficios que conectan con las necesidades del médico/paciente? ¿Manejó objeciones?
-            4.  **Cierre (Paso 4)**: ¿Realizó acuerdos de prescripción? ¿Identificó señales de compra y solicitó el uso del producto?
-            5.  **Puente (Paso 5 - para segundo producto, si aplica)**: Si la conversación da pie a un segundo producto, ¿el participante realizó una transición efectiva usando "ganchos"?
-            6.  **Análisis Posterior (Paso 8)**: Aunque no se evalúa directamente en la conversación, infiere si el participante demostró capacidad para auto-evaluar la visita.
+Evalúa al representante según los siguientes criterios:
 
-            **Habilidades/Competencias Clave (transversales al modelo):**
-            -   **Diagnóstico Profundo (D)**: Capacidad de indagar en las necesidades del médico y perfil del paciente.
-            -   **Arte de Conectar (A)**: Empatía, escucha activa, creación de conversaciones significativas.
-            -   **Valor con Propósito (V)**: Presentar soluciones relevantes, centradas en el bienestar del paciente y con evidencia.
-            -   **Innovación Adaptativa (I)**: Personalización del approach, uso creativo de herramientas (aunque no observables aquí).
-            -   **Nutrir el Conocimiento (N)**: Demostrar conocimiento profundo del producto y patología.
-            -   **Curiosidad Activa (C)**: Preguntar, investigar, cuestionar para ir más allá de lo evidente.
-            -   **Impacto Positivo (I)**: Dejar una huella memorable y un beneficio real.
+1️⃣ **Modelo de ventas Da Vinci**
 
-            **Insights Discovery - Adaptación al estilo del Médico (Leo):**
-            -   Evalúa si el participante adaptó su comunicación basándose en su discurso. Si es posible, infiere el tipo de personalidad del médico (Rojo Fuego, Azul Mar, Amarillo Sol, Verde Tierra) basado solo en las preguntas o inferencias del participante sobre el médico y evalúa la adaptación.
+- Diagnóstico
+- Argumentación
+- Validación
+- Cierre
 
-            **Manejo de Objeciones (MILD/APACT):**
-            -   Si el participante mencionó una objeción del médico, ¿el participante la manejó siguiendo los pasos de APACT (Admitir, Preguntar, Argumentar, Confirmar, Transición) y si identificó el tipo de objeción (Malentendido, Indiferencia, Limitación, Duda - MILD)? Si no se mencionó ninguna objeción del médico por parte del participante, asume que no hubo.
+Marca una fase como "Cumplida" SOLO si el participante demuestra:
 
-            **Output Format:**
-            Your response MUST be a JSON object with two main keys: "public_summary" (string) and "internal_analysis" (object).
+✅ conocimiento del producto  
+✅ comprensión de las necesidades del médico / paciente  
+✅ argumentación sólida y clínica  
+✅ respuestas claras y verídicas  
+✅ manejo adecuado de las preguntas del médico
 
-            The "public_summary" should be a concise, motivating overall feedback for the participant.
-            The "internal_analysis" object should contain detailed, structured feedback for HR, with keys like:
-            - "overall_evaluation": string (brief summary for HR)
-            - "da_vinci_model_feedback": object with keys for each phase (e.g., "apertura": {"score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico"})
-            - "insights_discovery_adaptation": {"inferred_leo_type": "string", "adaptation_score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico sobre la adaptación"}
-            - "objection_handling_feedback": {"objection_detected": "bool", "type": "string", "apact_applied": "string (Total/Parcial/No Aplicado)", "feedback": "Detalle específico"}
-            - "active_listening_feedback": {"score": "Bueno/Regular/Necesita Mejora", "feedback": "Detalle específico"}
-            - "strengths": array of strings
-            - "areas_for_improvement_specific": array of strings (actionable advice for HR)
-        """)
+Si la frase fue vaga, falsa, improvisada o sin relación con las necesidades del médico → marca "Necesita Mejora".
 
-        # If leo_text is empty, adjust the user prompt to reflect that context
+**Si el participante menciona información falsa, inventada o incorrecta clínicamente → marca TODAS las fases como "Necesita Mejora"**.
+
+Ejemplos de información falsa: decir que el producto cura el cáncer, inventar estudios inexistentes, decir que reduce tumores, etc.
+
+2️⃣ **Prioridad en uso del tiempo**
+
+Evalúa si el participante usó bien el tiempo disponible:
+
+- dio suficiente espacio a las necesidades del médico  
+- no se extendió innecesariamente en contexto  
+- priorizó la argumentación y los cierres
+
+Marcar como: Correcta / Mejorable / Deficiente
+
+3️⃣ **Adaptación al estilo del médico**
+
+Evalúa si el participante:
+
+- escuchó activamente al médico  
+- adaptó su lenguaje y profundidad según el estilo del médico (más técnico, más humano, más empático, más ocupado)
+
+Marcar como: Correcta / Mejorable / Deficiente
+
+4️⃣ **Control de la conversación**
+
+Evalúa si el participante:
+
+- supo conducir la conversación  
+- manejó adecuadamente tiempos y transiciones  
+- realizó un cierre efectivo o no
+
+Marcar como: Correcto / Mejorable / Deficiente
+
+5️⃣ **Manejo de preguntas críticas del médico**
+
+Si el médico hizo preguntas difíciles (por ejemplo: "¿por qué cambiaría a este producto?"):
+
+- evalúa si el participante respondió de forma adecuada y convincente
+
+Marcar como: Correcto / Mejorable / Deficiente / No aplicable (si no hubo preguntas críticas)
+
+---
+
+**IMPORTANTE:**
+
+Si detectas que el participante improvisa sin conocimiento (por ejemplo: "no sé", "no lo estudié", "no tengo idea"), penaliza todas las fases.
+
+Si detectas que el participante repite información sin estructura o de forma confusa, refleja eso en la evaluación.
+
+Si el participante fue claro, ordenado, convincente, marca las fases como "Cumplida" con su justificación.
+
+---
+
+### Output esperado:
+
+Devuelve el análisis con el siguiente formato:
+
+```plaintext
+Modelo de ventas Da Vinci:
+- Diagnóstico: Cumplida / Necesita Mejora + Justificación
+- Argumentación: Cumplida / Necesita Mejora + Justificación
+- Validación: Cumplida / Necesita Mejora + Justificación
+- Cierre: Cumplida / Necesita Mejora + Justificación
+
+Prioridad en uso del tiempo: Correcta / Mejorable / Deficiente + Justificación
+
+Adaptación al estilo del médico: Correcta / Mejorable / Deficiente + Justificación
+
+Control de la conversación: Correcto / Mejorable / Deficiente + Justificación
+
+Manejo de preguntas críticas del médico: Correcto / Mejorable / Deficiente / No aplicable + Justificación
+
+Resumen general para RH:
+[Resumen bien redactado como el que haría un coach humano.]
+
+Áreas de mejora específicas para coaching:
+[Listado de 3 a 5 recomendaciones claras, priorizadas.]
+                                        
+ """)  
+
         if not leo_text.strip():
             user_prompt = f"""
                 --- Inicio de Simulación ---
@@ -159,6 +219,13 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
                 Por favor, proporciona una evaluación detallada del Participante en formato JSON, siguiendo las instrucciones de tu rol como coach experto en ventas farmacéuticas.
                 """
 
+        # Detectar frases descalificadoras antes de llamar a GPT
+        disqualifying_flag = detect_disqualifying_phrases(user_text)
+
+        if disqualifying_flag:
+            print("[INFO] Se detectaron frases descalificadoras en el texto del participante.")
+
+        # Llamar a GPT
         completion = client.chat.completions.create(
             model="gpt-4o",
             response_format={ "type": "json_object" },
@@ -168,9 +235,9 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             ],
             temperature=0.4,
         )
-        
+
         gpt_response_content = completion.choices[0].message.content.strip()
-        
+
         try:
             parsed_gpt_response = json.loads(gpt_response_content)
             gpt_public_summary = parsed_gpt_response.get("public_summary", "No se generó resumen público.")
@@ -180,7 +247,6 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             gpt_public_summary = "⚠️ Evaluación automática (GPT) no disponible: Formato inválido."
             gpt_internal_structured_feedback = {"error": "Formato JSON inválido de GPT.", "raw_response": gpt_response_content[:200]}
 
-
     except OpenAIError as e:
         gpt_public_summary = f"⚠️ Evaluación automática (GPT) no disponible en este momento debido a un error: {str(e)}"
         gpt_internal_structured_feedback = {"error": f"Error de OpenAI: {str(e)}"}
@@ -189,7 +255,6 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
         gpt_public_summary = f"⚠️ Evaluación automática (GPT) no disponible debido a un error inesperado: {str(e)}"
         gpt_internal_structured_feedback = {"error": f"Error inesperado al llamar a GPT: {str(e)}"}
         feedback_level = "error"
-
 
     final_internal_summary_dict = {
         "overall_rh_summary": gpt_internal_structured_feedback.get("overall_evaluation", "Evaluación general no disponible del GPT."),
@@ -204,13 +269,10 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
             "steps_applied_count": f"{model_applied_steps_count}/4"
         },
         "active_listening_simple_detection": 'Alta' if active_listening_score >= 4 else 'Moderada' if active_listening_score >= 2 else 'Baja',
-
+        "disqualifying_phrases_detected": disqualifying_flag,
         "gpt_detailed_feedback": gpt_internal_structured_feedback,
         "error_during_eval": gpt_internal_structured_feedback.get("error", "No error detected from GPT.")
     }
-    
-    # ELIMINAR O COMENTAR ESTA LÍNEA: final_internal_summary_json = json.dumps(final_internal_summary_dict, ensure_ascii=False, indent=2)
-
 
     public_summary_for_user = textwrap.dedent(f"""
         {gpt_public_summary}
@@ -226,6 +288,6 @@ def evaluate_interaction(user_text, leo_text, video_path=None):
 
     return {
         "public": public_summary_for_user.strip(),
-        "internal": final_internal_summary_dict, # CAMBIO: Devolver el diccionario, no la cadena JSON
+        "internal": final_internal_summary_dict,
         "level": feedback_level
     }
