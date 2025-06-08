@@ -198,6 +198,31 @@ Resumen general para RH:
 Áreas de mejora específicas para coaching:
 [Listado de 3 a 5 recomendaciones claras, priorizadas.]
                                         
+                                        Además de mostrar el análisis en formato de texto como se describió arriba, devuelve TAMBIÉN en tu respuesta final un bloque JSON llamado "internal_analysis", con la siguiente estructura y campos obligatorios:
+
+"internal_analysis": {
+    "overall_evaluation": "[Resumen general redactado como un coach humano.]",
+    "Preparacion_de_la_visita": "[Cumplida / Necesita Mejora + Justificación]",
+    "Apertura": "[Cumplida / Necesita Mejora + Justificación]",
+    "Persuasion": "[Cumplida / Necesita Mejora + Justificación]",
+    "Cierre": "[Cumplida / Necesita Mejora + Justificación]",
+    "Puente": "[Cumplida / Necesita Mejora / No Aplicable + Justificación]",
+    "Adaptación_al_estilo_del_medico": {
+        "tipo_inferido": "[Determinado / No Determinado]",
+        "nivel_de_adaptacion": "[Correcta / Mejorable / Deficiente / Necesita Mejora]",
+        "comentarios": "[Comentario redactado como coach humano]"
+    },
+    "Manejo_de_objeciones": "[Correcto / Mejorable / Deficiente / No Aplicable + Justificación]",
+    "Escucha_activa": "[Cumplida / Necesita Mejora + Justificación]",
+    "Areas_de_mejora": [
+        "Primera recomendación clara",
+        "Segunda recomendación clara",
+        "Tercera recomendación clara",
+        "Cuarta recomendación clara",
+        "Quinta recomendación clara"
+    ]
+}
+                                        
  """)  
 
         if not leo_text.strip():
@@ -208,6 +233,7 @@ Resumen general para RH:
                 --- Fin de Simulación ---
 
                 Por favor, proporciona una evaluación detallada del Participante en formato JSON, siguiendo las instrucciones de tu rol como coach experto en ventas farmacéuticas. Enfócate exclusivamente en las palabras del Participante.
+                Además, incluye en el JSON final el bloque "internal_analysis" con la estructura exacta que se indicó.
                 """
         else:
             user_prompt = f"""
