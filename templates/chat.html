@@ -176,23 +176,72 @@
     });
   </script>
 
-  <script type="module">
-    // D-ID Agent setup
-    const agent = document.createElement("script");
-    agent.type = "module";
-    agent.src = "https://agent.d-id.com/v1/index.js";
-    agent.setAttribute("data-name", "did-agent");
-    agent.setAttribute("data-mode", "fabio");
-    // !! IMPORTANT: Replace with your actual D-ID Client Key and Agent ID
-    agent.setAttribute("data-client-key", "Z29vZ2xlLW9hdXRoMnwxMDM4NDYxNzYzNTI0NDE3NDc2NDY6MFR2bThhSXJ0QlhEZENCdmdBTkNN");
-    agent.setAttribute("data-agent-id", "agt_8nBIc-s-");
-    agent.setAttribute("data-monitor", "false"); // Set to false, as we are not monitoring D-ID events for conversation capture
-    document.getElementById("ai-agent").appendChild(agent);
+  <script>
+!function(window){
+  const host="https://labs.heygen.com";
+  const url=host+"/guest/streaming-embed?share={{ heygen_streaming_share_token }}&inIFrame=1";
+  const clientWidth=document.body.clientWidth;
+  const wrapDiv=document.createElement("div");
+  wrapDiv.id="heygen-streaming-embed";
+  const container=document.createElement("div");
+  container.id="heygen-streaming-container";
+  const stylesheet=document.createElement("style");
+  stylesheet.innerHTML=`
+    #heygen-streaming-embed {
+      z-index: 9999;
+      position: fixed;
+      left: 40px;
+      bottom: 40px;
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0px 8px 24px 0px rgba(0, 0, 0, 0.12);
+      transition: all linear 0.1s;
+      overflow: hidden;
+      opacity: 0;
+      visibility: hidden;
+    }
+    #heygen-streaming-embed.show {
+      opacity: 1;
+      visibility: visible;
+    }
+    #heygen-streaming-embed.expand {
+      ${clientWidth<540?"height: 266px; width: 96%; left: 50%; transform: translateX(-50%);":"height: 366px; width: calc(366px * 16 / 9);"}
+      border: 0;
+      border-radius: 8px;
+    }
+    #heygen-streaming-container {
+      width: 100%;
+      height: 100%;
+    }
+    #heygen-streaming-container iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+  `;
+  const iframe=document.createElement("iframe");
+  iframe.allowFullscreen=!1;
+  iframe.title="Streaming Embed";
+  iframe.role="dialog";
+  iframe.allow="microphone";
+  iframe.src=url;
+  let visible=!1,initial=!1;
+  window.addEventListener("message",(e=>{
+    e.origin===host&&e.data&&e.data.type&&"streaming-embed"===e.data.type&&(
+      "init"===e.data.action?(initial=!0,wrapDiv.classList.toggle("show",initial)):
+      "show"===e.data.action?(visible=!0,wrapDiv.classList.toggle("expand",visible)):
+      "hide"===e.data.action&&(visible=!1,wrapDiv.classList.toggle("expand",visible))
+    );
+  }));
+  container.appendChild(iframe);
+  wrapDiv.appendChild(stylesheet);
+  wrapDiv.appendChild(container);
+  document.body.appendChild(wrapDiv);
+}(globalThis);
+</script>
 
-    // !! IMPORTANT: All D-ID event listeners for conversation capture are REMOVED.
-    // The D-ID agent is solely for visual interaction.
-    // User's speech will be transcribed from the recorded video via Whisper.
-  </script>
 
   <script>
     document.addEventListener("DOMContentLoaded", async () => {
