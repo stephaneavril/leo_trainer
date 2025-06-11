@@ -273,7 +273,7 @@
         sessionEnded = true;
         clearInterval(interval); // Stop the countdown timer
 
-        const duration = 180 - countdown; // Calculate actual session duration (for a 3-minute session)
+        const duration = 480 - countdown; // Calculate actual session duration (for a 8-minute session)
         document.getElementById("recording-indicator")?.remove();
         endBtn.disabled = true;
         endBtn.textContent = "Finalizando sesión..."; // Updated text
