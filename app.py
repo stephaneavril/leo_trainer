@@ -337,7 +337,7 @@ def chat():
     scenario = request.form["scenario"] if "scenario" in request.form else session.get("scenario")
     token = request.form.get("token") or session.get("token") # Obtener el token del formulario o de la sesión
 
-    if not name or not email or not scenario or not token: 
+    if not name or not email or not scenario or not token:
         print(f"DEBUG: Redirigiendo a index desde /chat. Datos faltantes: Name={name}, Email={email}, Scenario={scenario}, Token={token}")
         return redirect(url_for('index'))
 
@@ -345,14 +345,29 @@ def chat():
 
     now = datetime.now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    
+
     conn = get_db_connection() # ¡Cambio de SQLite a PostgreSQL!
     c = conn.cursor()
     c.execute("SELECT SUM(duration_seconds) FROM interactions WHERE email = %s AND timestamp >= %s", (email, start_of_month))
     used_seconds = c.fetchone()[0] or 0
     conn.close()
 
-    return render_template("chat.html", name=name, email=email, scenario=scenario, used_seconds=used_seconds, token=token) 
+    # --- THIS IS THE CORRECT PLACEMENT FOR FETCHING HEYGEN TOKEN ---
+    heygen_streaming_share_token = os.getenv("HEYGEN_STREAMING_SHARE_TOKEN")
+    if not heygen_streaming_share_token:
+        print("ERROR: HEYGEN_STREAMING_SHARE_TOKEN environment variable is not set!")
+        # You might want to return an error page or a more user-friendly message here
+        return "Error de configuración: El token de HeyGen no está disponible.", 500
+
+    return render_template(
+        "chat.html",
+        name=name,
+        email=email,
+        scenario=scenario,
+        used_seconds=used_seconds,
+        token=token,
+        heygen_streaming_share_token=heygen_streaming_share_token # Pass the token to the template
+    )
 
 @app.route("/dashboard", methods=["GET", "POST"]) 
 def dashboard():

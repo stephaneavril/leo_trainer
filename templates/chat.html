@@ -424,16 +424,20 @@
                 frameRate: { ideal: 15, max: 24 } // Optionally, reduce frame rate
             }
         });
-        const preview = document.createElement("video");
-        preview.srcObject = stream;
-        preview.autoplay = true;
-        preview.muted = true;
-        preview.style.width = "200px";
-        preview.style.position = "fixed";
-        preview.style.bottom = "20px";
-        preview.style.left = "20px";
-        preview.id = "preview-video";
-        document.body.appendChild(preview);
+      const preview = document.createElement("video");
+preview.srcObject = stream;
+preview.autoplay = true;
+preview.muted = true;
+preview.style.width = "320px";           // MÁS GRANDE
+preview.style.height = "180px";          // PROPORCIÓN 16:9
+preview.style.position = "fixed";
+preview.style.bottom = "20px";
+preview.style.right = "20px";            // A LA DERECHA
+preview.style.border = "2px solid #00bfff";  // OPCIONAL: le pones borde para que quede más bonito
+preview.style.borderRadius = "12px";         // OPCIONAL: bordes redondeados
+preview.style.boxShadow = "0 0 10px rgba(0,0,0,0.5)"; // OPCIONAL: un poco de sombra
+preview.id = "preview-video";
+document.body.appendChild(preview);
 
         status.textContent = "Permiso concedido. Grabando sesión...";
 
