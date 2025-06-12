@@ -120,6 +120,9 @@
   </style>
 </head>
 <body>
+  <script>
+  const avatarTranscript = []; // Global: todos los scripts lo ven
+</script>
   <div id="recording-indicator" title="Grabando..."></div>
   <h1>🧠 Leo - {{ scenario }}</h1>
   <p id="status">Solicitando permisos para cámara y micrófono...</p>
@@ -242,12 +245,23 @@
 }(globalThis);
 </script>
 
+<script>
+window.addEventListener("message", (event) => {
+    if (event.origin === "https://labs.heygen.com" && event.data && event.data.type === "streaming-embed") {
+        if (event.data.action === "avatarUtterance" && event.data.text) {
+            avatarTranscript.push(event.data.text);
+            console.log("[Avatar Utterance] ", event.data.text);  // Opcional: para ver en consola
+        }
+    }
+});
+</script>
 
   <script>
     document.addEventListener("DOMContentLoaded", async () => {
       const name = "{{ name }}";
       const email = "{{ email }}";
       const scenario = "{{ scenario }}";
+
       // The `used_seconds` from the server is still needed to track the monthly cap.
       // const usedSeconds = parseInt("{{ used_seconds|default(0) }}"); // Kept as it is used to calculate monthly total
       // const remainingTime = Math.max(300 - usedSeconds, 0); // REMOVED: No longer carry over time
@@ -259,7 +273,7 @@
 
       let recorder, chunks = [], stream;
       let sessionEnded = false;
-      let countdown = 180; // FIXED: Each session starts with 3 minutes (180 seconds)
+      let countdown = 480; // FIXED: Each session starts with 8 minutes (480 seconds)
       let interval;
 
       const updateTimer = (duration) => {
@@ -378,17 +392,19 @@
           // Send an empty 'conversation' array since D-ID events are not being captured.
           // The AI will rely solely on Whisper transcription of the video for user text.
           const sessionRes = await fetch('/log_full_session', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name,
-              email,
-              scenario,
-              conversation: [], // Sending an empty array as D-ID conversation is not captured
-              duration,
-              video_filename: videoData?.s3_object_key || null // Use s3_object_key from previous response
-            })
-          });
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        name,
+        email,
+        scenario,
+        conversation: [], // Aquí sigue vacío si no usas D-ID
+        avatar_transcript: avatarTranscript,  // <--- AQUI AGREGAS ESTO
+        duration,
+        video_filename: videoData?.s3_object_key || null
+    })
+});
+
           sessionData = await sessionRes.json();
           // Check for 'processing' status from the new async response
           if (sessionData.status === 'processing') {

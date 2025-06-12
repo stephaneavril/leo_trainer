@@ -485,8 +485,9 @@ def log_full_session():
     scenario = data.get("scenario")
     conversation = data.get("conversation", [])
     duration = int(data.get("duration", 0))
+    avatar_transcript = data.get("avatar_transcript", [])  # 👈 Aquí capturamos el avatar transcript
 
-    video_object_key = session.pop("last_video_s3_key", None) 
+    video_object_key = session.pop("last_video_s3_key", None)
     
     if not video_object_key:
         print("[ERROR] log_full_session: No se encontró video_object_key en la sesión.")
@@ -495,13 +496,30 @@ def log_full_session():
             "message": "Error interno: No se pudo encontrar el video subido para procesar."
         }), 500
 
+    # GUARDAR EN BD (opcional si ya lo haces en Celery, pero es bueno tenerlo aquí también)
+    with db_conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO interactions (name, email, scenario, duration, video_filename, avatar_transcript)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            name,
+            email,
+            scenario,
+            duration,
+            video_object_key,
+            "\n".join(avatar_transcript)  # guardamos como texto separado por saltos de línea
+        ))
+        db_conn.commit()
+
+    # Ahora pasamos el task a Celery igual que siempre:
     task_data = {
         "name": name,
         "email": email,
         "scenario": scenario,
         "conversation": conversation,
         "duration": duration,
-        "video_object_key": video_object_key 
+        "video_object_key": video_object_key,
+        "avatar_transcript": avatar_transcript  # 👈 También lo mandamos a Celery por si quieres usarlo ahí
     }
 
     from celery_worker import process_session_video
@@ -574,7 +592,7 @@ def admin_panel():
 
         # --- DEBUGGING PRINTS ADDED HERE FOR ADMIN PANEL ---
         print(f"DEBUG: Admin Panel Query - Fetching all interactions.")
-        c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback
+        c.execute("""SELECT name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, tip, visual_feedback, avatar_transcript
                          FROM interactions
                          ORDER BY timestamp DESC""")
         raw_data = c.fetchall()

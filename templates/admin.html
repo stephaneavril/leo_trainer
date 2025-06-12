@@ -407,6 +407,17 @@
           <p style="color: gray; text-align: center;">🎥 No se encontró video para esta sesión.</p>
         {% endif %}
 
+         {% if row[9] %}
+      <div class="chat-log" style="background-color: #fcf8f2; border-left-color: #ffaa00;">
+        <p><strong>🗣️ Discurso completo del Avatar:</strong></p>
+        <ul>
+          {% for line in row[9] %}
+            <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
         <div class="evaluation">
           <strong>Resumen para usuario:</strong><br>
           {{ row[7] }}
@@ -534,6 +545,7 @@
       </div>
     {% endfor %}
 
+
     <h2 class="section-title">📈 Resumen de Tiempo por Usuario</h2>
     <div class="summary-row">
       <table>
@@ -610,7 +622,7 @@
         <input name="start_date" type="date" id="start_date" required>
 
         <label for="end_date">Fin:</label>
-        <input name="end_date" type="date" id="end_date" required>  <--- Added name="end_date"
+        <input name="end_date" type="date" id="end_date" required>  <!-- Added name="end_date" -->
         
         <button type="submit">Guardar Nuevo Usuario</button>
       </form>
