@@ -375,6 +375,8 @@ window.addEventListener("message", (event) => {
             } else {
               console.error("Backend did not confirm video saved or s3_object_key missing:", videoData);
               alert("⚠️ Problema al subir el video. Consulta la consola para más detalles.");
+              return; // <--- 🔥 IMPORTANTE: NO PROSEGUIR A log_full_session si el video no está.
+
             }
           } catch (error) {
             console.error("Error uploading video:", error);

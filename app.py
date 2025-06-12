@@ -484,10 +484,9 @@ def log_full_session():
     email = data.get("email")
     scenario = data.get("scenario")
     conversation = data.get("conversation", [])
+    avatar_transcript = data.get("avatar_transcript", [])  # 👈 importante
     duration = int(data.get("duration", 0))
-    avatar_transcript = data.get("avatar_transcript", [])  # 👈 Aquí capturamos el avatar transcript
-
-    video_object_key = session.pop("last_video_s3_key", None)
+    video_object_key = data.get("video_filename")  # CAMBIO AQUÍ 🚀
     
     if not video_object_key:
         print("[ERROR] log_full_session: No se encontró video_object_key en la sesión.")
@@ -496,30 +495,38 @@ def log_full_session():
             "message": "Error interno: No se pudo encontrar el video subido para procesar."
         }), 500
 
-    # GUARDAR EN BD (opcional si ya lo haces en Celery, pero es bueno tenerlo aquí también)
-    with db_conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO interactions (name, email, scenario, duration, video_filename, avatar_transcript)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            name,
-            email,
-            scenario,
-            duration,
-            video_object_key,
-            "\n".join(avatar_transcript)  # guardamos como texto separado por saltos de línea
-        ))
-        db_conn.commit()
+    # Guarda en la tabla sessions
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO sessions (name, email, scenario, duration, video_filename, avatar_transcript)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                name,
+                email,
+                scenario,
+                duration,
+                video_object_key,
+                json.dumps(avatar_transcript)  # 👈 Guarda transcript como JSON string
+            ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[ERROR] log_full_session DB insert failed: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Error interno al guardar la sesión en la base de datos."
+        }), 500
 
-    # Ahora pasamos el task a Celery igual que siempre:
+    # Lanza tarea Celery para procesar
     task_data = {
         "name": name,
         "email": email,
         "scenario": scenario,
         "conversation": conversation,
         "duration": duration,
-        "video_object_key": video_object_key,
-        "avatar_transcript": avatar_transcript  # 👈 También lo mandamos a Celery por si quieres usarlo ahí
+        "video_object_key": video_object_key
     }
 
     from celery_worker import process_session_video
