@@ -500,16 +500,22 @@ def log_full_session():
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO sessions (name, email, scenario, duration, video_filename, avatar_transcript)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO interactions (name, email, scenario, message, response, audio_path, timestamp, evaluation, evaluation_rh, duration_seconds, tip, visual_feedback)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 name,
                 email,
                 scenario,
-                duration,
+               json.dumps(conversation),
+                " ".join(avatar_transcript),
                 video_object_key,
-                json.dumps(avatar_transcript)  # 👈 Guarda transcript como JSON string
-            ))
+                datetime.now().isoformat(),
+                "",
+                "",
+                duration,
+                "",
+                ""
+          ))
         conn.commit()
         conn.close()
     except Exception as e:
