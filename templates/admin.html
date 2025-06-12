@@ -407,16 +407,16 @@
           <p style="color: gray; text-align: center;">🎥 No se encontró video para esta sesión.</p>
         {% endif %}
 
-         {% if row[9] %}
-      <div class="chat-log" style="background-color: #fcf8f2; border-left-color: #ffaa00;">
-        <p><strong>🗣️ Discurso completo del Avatar:</strong></p>
-        <ul>
-          {% for line in row[9] %}
-            <li>{{ line }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% endif %}
+        {% if row[9] %}
+<div class="chat-log" style="background-color: #fcf8f2; border-left-color: #ffaa00;">
+  <p><strong>🗣️ Discurso completo del Avatar:</strong></p>
+ <div style="background-color: #e9f5ff; border: 1px solid #cce5ff; padding: 14px; border-radius: 16px; font-family: 'Open Sans', sans-serif; font-size: 15px; color: #222; line-height: 1.6; white-space: pre-line; max-width: 90%; margin: 10px auto;">
+    🗨️ {{ row[9] }}
+</div>
+
+</div>
+{% endif %}
+
 
         <div class="evaluation">
           <strong>Resumen para usuario:</strong><br>
