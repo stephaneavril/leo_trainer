@@ -459,7 +459,7 @@ document.body.appendChild(preview);
 
         status.textContent = "Permiso concedido. Grabando sesión...";
 
-        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8" });
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.start();
         console.log("MediaRecorder started.");
