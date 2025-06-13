@@ -446,6 +446,7 @@ window.addEventListener("message", (event) => {
 preview.srcObject = stream;
 preview.autoplay = true;
 preview.muted = true;
+preview.playsinline = true; // Agrega esta línea justo después de preview.muted = true;
 preview.style.width = "320px";           // MÁS GRANDE
 preview.style.height = "180px";          // PROPORCIÓN 16:9
 preview.style.position = "fixed";
