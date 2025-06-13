@@ -459,7 +459,12 @@ document.body.appendChild(preview);
 
         status.textContent = "Permiso concedido. Grabando sesión...";
 
-        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8" });
+        recorder = new MediaRecorder(stream, {
+            mimeType: "video/webm;codecs=vp8",
+            videoBitsPerSecond: 2500000, // 2.5 Mbps para buena calidad en 640x480
+            audioBitsPerSecond: 128000   // 128 kbps para audio
+        });
+
         recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
         recorder.start();
         console.log("MediaRecorder started.");
