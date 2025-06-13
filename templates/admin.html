@@ -402,9 +402,9 @@
           <p><strong>Leo:</strong> {{ row[4] }}</p>
         </div>
 
-        {% if row[5] %}
+        {% if row[5] and row[8].overall_rh_summary %}
           <video controls src="{{ row[5] }}"></video> {% else %}
-          <p style="color: gray; text-align: center;">🎥 No se encontró video para esta sesión.</p>
+          <p style="color: gray; text-align: center;">⏳ Esta sesión se mostrará completa cuando el análisis haya terminado.</p>
         {% endif %}
 
         {% if row[9] %}
@@ -424,11 +424,8 @@
         </div>
 
         <div class="evaluation rh">
-          <strong>Análisis para RH:</strong><br>
-          {% if row[8].error %}
-            <p style="color: var(--secondary-red); font-weight: bold;">Error al cargar el análisis: {{ row[8].error }}</p>
-            <pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 0.85em; background: #fdfdff; padding: 10px; border-radius: 5px;">{{ row[8].raw_content if row[8].raw_content else 'Contenido RAW no disponible.' }}</pre>
-          {% else %}
+          {% if row[8].overall_rh_summary %}
+            <strong>Análisis para RH:</strong><br>
             <p><strong>Resumen General RH:</strong> {{ row[8].overall_rh_summary }}</p>
 
             <h4>🎯 Aplicación del Modelo de Ventas (Da Vinci)</h4>

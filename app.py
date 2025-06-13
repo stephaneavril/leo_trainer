@@ -616,8 +616,10 @@ def admin_panel():
         for row in raw_data:
             try:
                 parsed_rh_evaluation = json.loads(row[8])
+                if not parsed_rh_evaluation or parsed_rh_evaluation == "":
+                  parsed_rh_evaluation = {}
             except (json.JSONDecodeError, TypeError):
-                parsed_rh_evaluation = {"error": "Invalid JSON or old format", "raw_content": row[8]}
+                parsed_rh_evaluation = {}
 
             processed_row = list(row)
             processed_row[8] = parsed_rh_evaluation 
