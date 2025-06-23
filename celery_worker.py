@@ -110,6 +110,8 @@ def init_db():
                 duration_seconds INTEGER DEFAULT 0,
                 tip TEXT,
                 visual_feedback TEXT
+                avatar_transcript TEXT -- AÑADE ESTA LÍNEA AQUÍ
+
             );
         ''')
         c.execute('''
@@ -140,10 +142,10 @@ def patch_db_schema():
         conn = get_db_connection() # ¡CORREGIDO!
         c = conn.cursor()
 
-        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='evaluation_rh'")
+        c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='avatar_transcript'")
         if not c.fetchone():
-            c.execute("ALTER TABLE interactions ADD COLUMN evaluation_rh TEXT;")
-            print("Added 'evaluation_rh' to interactions table in worker.")
+            c.execute("ALTER TABLE interactions ADD COLUMN avatar_transcript TEXT;")
+            print("Added 'avatar_transcript' to interactions table in worker.")
 
         c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='interactions' AND column_name='tip'")
         if not c.fetchone():
